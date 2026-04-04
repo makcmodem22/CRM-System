@@ -1,0 +1,96 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  ADMIN
+  TRAINER
+  CLIENT
+}
+
+enum LessonStatus {
+  SCHEDULED
+  CANCELLED
+  COMPLETED
+}
+
+enum BookingStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  CREATED
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+model User {
+  id               String            @id @default(uuid())
+  role             Role              @default(CLIENT)
+  phone            String            @unique
+  email            String            @unique
+  name             String
+  templates        ScheduleTemplate[]
+  actualLessons    ActualLesson[]
+  bookings         Booking[]
+}
+
+model ScheduleTemplate {
+  id               String            @id @default(uuid())
+  trainer_id       String
+  trainer          User              @relation(fields: [trainer_id], references: [id])
+  day_of_week      Int               // 0-6 (0 = Sunday)
+  start_time       String            // e.g. "10:00"
+  end_time         String            // e.g. "11:00"
+  class_name       String
+  capacity         Int
+  actualLessons    ActualLesson[]
+}
+
+model ActualLesson {
+  id               String            @id @default(uuid())
+  template_id      String?
+  template         ScheduleTemplate? @relation(fields: [template_id], references: [id])
+  trainer_id       String
+  trainer          User              @relation(fields: [trainer_id], references: [id])
+  start_timestamp  DateTime
+  end_timestamp    DateTime
+  class_name       String
+  capacity         Int
+  status           LessonStatus      @default(SCHEDULED)
+  bookings         Booking[]
+
+  @@index([start_timestamp, status])
+}
+
+model Booking {
+  id               String            @id @default(uuid())
+  lesson_id        String
+  lesson           ActualLesson      @relation(fields: [lesson_id], references: [id])
+  client_id        String
+  client           User              @relation(fields: [client_id], references: [id])
+  status           BookingStatus     @default(PENDING_PAYMENT)
+  created_at       DateTime          @default(now())
+  payment          Payment?
+}
+
+model Payment {
+  id               String            @id @default(uuid())
+  booking_id       String            @unique
+  booking          Booking           @relation(fields: [booking_id], references: [id])
+  mono_invoice_id  String            @unique
+  amount           Decimal           @db.Decimal(10, 2)
+  status           PaymentStatus     @default(CREATED)
+  created_at       DateTime          @default(now())
+  updated_at       DateTime          @updatedAt
+}
