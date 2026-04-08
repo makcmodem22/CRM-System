@@ -582,7 +582,6 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
   // Colors
   const GOLD = '#DDA343' // Deeper yellow/gold matching the image
   const TEXT_DARK = '#2C3E50'
-  const BORDER = '#2C3E50' // Dark blue/grey matching the image's grid lines
 
   return (
     <div style={{ position: 'fixed', top: '-99999px', left: '-99999px', width: `${CANVAS}px`, height: `${CANVAS}px` }}>
