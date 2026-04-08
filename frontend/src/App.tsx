@@ -131,7 +131,6 @@ function ClientPage({ lessons, setLessons }: { lessons: ActualLesson[], setLesso
             <AnimatePresence>
               {filteredLessons.map((lesson, idx) => {
                 const isFull = lesson.booked_count >= lesson.capacity
-                const fillPct = Math.min(100, Math.round((lesson.booked_count / lesson.capacity) * 100))
 
                 return (
                   <motion.div key={lesson.id} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.05, duration: 0.3 }}>
@@ -582,12 +581,8 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
 
   // Colors
   const GOLD = '#DDA343' // Deeper yellow/gold matching the image
-  const CREAM = '#FDFDF9' 
   const TEXT_DARK = '#2C3E50'
-  const TEXT_MID = '#4A5568'
   const BORDER = '#2C3E50' // Dark blue/grey matching the image's grid lines
-
-  const cellBorder = `1px solid ${BORDER}`
 
   return (
     <div style={{ position: 'fixed', top: '-99999px', left: '-99999px', width: `${CANVAS}px`, height: `${CANVAS}px` }}>
