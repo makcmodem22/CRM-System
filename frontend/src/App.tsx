@@ -224,7 +224,7 @@ function ClientPage({ lessons, setLessons, currentClient, onClientLogout }: {
 
   const openCancelDialog = (lesson: ActualLesson) => {
     const hoursLeft = (lesson.start_timestamp.getTime() - Date.now()) / (1000 * 60 * 60)
-    setCancelBlocked(hoursLeft < 12)
+    setCancelBlocked(hoursLeft < 6)
     setCancelLesson(lesson)
   }
 
@@ -344,9 +344,9 @@ function ClientPage({ lessons, setLessons, currentClient, onClientLogout }: {
           </DialogHeader>
           <div className="py-2">
              {cancelBlocked ? (
-               <p className="text-sm text-red-700 bg-red-50 p-4 rounded-xl border border-red-100">Скасування неможливе — до початку заняття залишилось менше 12 годин.</p>
+               <p className="text-sm text-red-700 bg-red-50 p-4 rounded-xl border border-red-100">Скасування неможливе — до початку заняття залишилось менше 6 годин.</p>
              ) : (
-               <p className="text-sm text-amber-800 bg-amber-50 p-4 rounded-xl border border-amber-100">Більше ніж 12 годин. Буде ініційовано повернення коштів (Refund).</p>
+               <p className="text-sm text-amber-800 bg-amber-50 p-4 rounded-xl border border-amber-100">Більше ніж 6 годин. Буде ініційовано повернення коштів (Refund).</p>
              )}
           </div>
           <DialogFooter>
