@@ -373,9 +373,9 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
   const lesson = lessons.find(l => l.id === id)
 
   const [step, setStep] = useState<'choose' | 'single_form' | 'sub_confirm' | 'buy_plan' | 'success'>('choose')
-  const [name, setName] = useState('')
-  const [phone, setPhone] = useState('')
-  const [email, setEmail] = useState('')
+  const [name, setName] = useState(currentClient?.name || '')
+  const [phone, setPhone] = useState(currentClient?.phone || '')
+  const [email, setEmail] = useState(currentClient?.email || '')
   const [isProcessing, setIsProcessing] = useState(false)
 
   const activeSub = getActiveSubscription(currentClient)
@@ -602,18 +602,23 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-6">
+                {currentClient && (
+                  <div className="mb-4 p-3 bg-emerald-50 border border-emerald-100 rounded-lg text-sm text-emerald-700 flex items-center gap-2">
+                    <Check className="w-4 h-4 shrink-0" /> Дані підставлено з вашого профілю
+                  </div>
+                )}
                 <form onSubmit={handleBookSingle} className="space-y-4">
                   <div>
                     <label className="text-sm font-medium text-slate-700 mb-1 flex items-center gap-1.5"><User className="w-3.5 h-3.5" /> Ваше ім'я</label>
-                    <input required placeholder="Іван Іванов" value={name} onChange={e=>setName(e.target.value)} className={inputClasses} />
+                    <input required placeholder="Іван Іванов" value={name} onChange={e=>setName(e.target.value)} className={cn(inputClasses, currentClient ? 'bg-slate-50 text-slate-600' : '')} readOnly={!!currentClient} />
                   </div>
                   <div>
                     <label className="text-sm font-medium text-slate-700 mb-1 flex items-center gap-1.5"><Phone className="w-3.5 h-3.5" /> Номер телефону</label>
-                    <input required type="tel" placeholder="+380 99 000 00 00" value={phone} onChange={e=>setPhone(e.target.value)} className={inputClasses} />
+                    <input required type="tel" placeholder="+380 99 000 00 00" value={phone} onChange={e=>setPhone(e.target.value)} className={cn(inputClasses, currentClient ? 'bg-slate-50 text-slate-600' : '')} readOnly={!!currentClient} />
                   </div>
                   <div>
                     <label className="text-sm font-medium text-slate-700 mb-1 flex items-center gap-1.5"><Mail className="w-3.5 h-3.5" /> Email для підтвердження</label>
-                    <input required type="email" placeholder="ivan@example.com" value={email} onChange={e=>setEmail(e.target.value)} className={inputClasses} />
+                    <input required type="email" placeholder="ivan@example.com" value={email} onChange={e=>setEmail(e.target.value)} className={cn(inputClasses, currentClient ? 'bg-slate-50 text-slate-600' : '')} readOnly={!!currentClient} />
                   </div>
                   <Button type="submit" disabled={isProcessing} className="w-full h-11 mt-4 bg-slate-900 text-white text-base">
                     {isProcessing ? 'Обробка...' : `Сплатити ${SINGLE_VISIT_PRICE}₴ та записатись`}
