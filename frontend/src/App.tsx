@@ -6,7 +6,7 @@ import { uk } from 'date-fns/locale'
 // @ts-ignore
 import domtoimage from 'dom-to-image-more'
 import {
-  Calendar as CalendarIcon, Clock, Users, ShieldAlert, User,
+  Calendar as CalendarIcon, Clock, Users, User,
   AlertTriangle, X, LogOut, Phone, Camera, Plus, Database, Settings,
   CreditCard, Mail, Lock, ChevronRight, Check, Crown, Eye, EyeOff,
   Ticket, Award, Star
