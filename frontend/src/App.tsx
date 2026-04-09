@@ -75,6 +75,17 @@ interface Client {
   bookings: ClientBookingRecord[]
 }
 
+interface PromoCode {
+  code: string
+  plan_id: string
+  plan_name: string
+  sessions: number
+  duration_days: number
+  created_at: string
+  used: boolean
+  used_by?: string // client email
+}
+
 // ── Constants ──────────────────────────────────────────────────────────────
 const SINGLE_VISIT_PRICE = 300
 
@@ -920,14 +931,19 @@ function AuthPage({ clients, setClients, setCurrentClientId }: {
 }
 
 // ── Page: Client Dashboard ──────────────────────────────────────────────────
-function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans }: {
+function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans, promoCodes, setPromoCodes }: {
   currentClient: Client | null,
   setClients: React.Dispatch<React.SetStateAction<Client[]>>,
   onClientLogout: () => void,
-  plans: SubscriptionPlan[]
+  plans: SubscriptionPlan[],
+  promoCodes: PromoCode[],
+  setPromoCodes: React.Dispatch<React.SetStateAction<PromoCode[]>>
 }) {
   const navigate = useNavigate()
   const [showBuyPlans, setShowBuyPlans] = useState(false)
+  const [promoInput, setPromoInput] = useState('')
+  const [promoError, setPromoError] = useState<string|null>(null)
+  const [promoSuccess, setPromoSuccess] = useState<string|null>(null)
 
   if (!currentClient) {
     return (
@@ -961,6 +977,34 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans 
       return { ...c, subscriptions: [...c.subscriptions, newSub] }
     }))
     setShowBuyPlans(false)
+  }
+
+  const handleActivatePromo = () => {
+    setPromoError(null)
+    setPromoSuccess(null)
+    const code = promoInput.trim().toUpperCase()
+    if (!code) return
+    const promo = promoCodes.find(p => p.code === code)
+    if (!promo) { setPromoError('Невірний код. Перевірте правильність.'); return }
+    if (promo.used) { setPromoError('Цей код вже використаний.'); return }
+    // Activate: create subscription from promo
+    const now = new Date()
+    const newSub: ClientSubscription = {
+      id: Math.random().toString(36).substr(2, 9),
+      plan_id: promo.plan_id,
+      plan_name: promo.plan_name + ' (Подарунок)',
+      total_sessions: promo.sessions,
+      used_sessions: 0,
+      purchased_at: now.toISOString(),
+      expires_at: addDays(now, promo.duration_days).toISOString()
+    }
+    setClients(prev => prev.map(c => {
+      if (c.id !== currentClient.id) return c
+      return { ...c, subscriptions: [...c.subscriptions, newSub] }
+    }))
+    setPromoCodes(prev => prev.map(p => p.code === code ? { ...p, used: true, used_by: currentClient.email } : p))
+    setPromoInput('')
+    setPromoSuccess(`Абонемент "${promo.plan_name}" успішно активовано!`)
   }
 
   return (
@@ -1126,6 +1170,33 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans 
                 </CardContent>
               </Card>
             )}
+
+            {/* Promo Code Activation */}
+            <Card className="border-emerald-200">
+              <CardHeader className="pb-2 border-b border-emerald-100">
+                <CardTitle className="text-sm font-semibold text-emerald-700 flex items-center gap-2">
+                  <Ticket className="w-4 h-4" /> Активувати подарунок
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-3 space-y-2">
+                <p className="text-xs text-slate-500">Якщо вам подарували промо-код, введіть його нижче:</p>
+                <input
+                  value={promoInput}
+                  onChange={e => { setPromoInput(e.target.value.toUpperCase()); setPromoError(null); setPromoSuccess(null) }}
+                  placeholder="BRAVE-XXXXXXXX"
+                  className={inputClasses + ' font-mono text-sm tracking-widest'}
+                />
+                {promoError && <p className="text-xs text-red-500">{promoError}</p>}
+                {promoSuccess && <p className="text-xs text-emerald-600 font-semibold">✓ {promoSuccess}</p>}
+                <Button
+                  onClick={handleActivatePromo}
+                  disabled={!promoInput.trim()}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm"
+                >
+                  <Check className="w-4 h-4 mr-1" /> Активувати
+                </Button>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </main>
@@ -1178,8 +1249,8 @@ function AdminLayout({ isAdminLogged, setIsAdminLogged }: { isAdminLogged: boole
             <CardTitle className="text-center">Вхід для Адміністратора</CardTitle>
           </CardHeader>
           <CardContent>
-            <form onSubmit={e => { e.preventDefault(); if(password==='admin123') setIsAdminLogged(true); else alert('Невірно!') }}>
-              <input type="password" required placeholder="Секретний пароль (admin123)" value={password} onChange={e=>setPassword(e.target.value)} className={inputClasses} />
+            <form onSubmit={e => { e.preventDefault(); if(password==='admin123') setIsAdminLogged(true); else alert('Невірний пароль!') }}>
+              <input type="password" required placeholder="Пароль" value={password} onChange={e=>setPassword(e.target.value)} className={inputClasses} />
               <Button type="submit" className="w-full mt-4 bg-purple-600 hover:bg-purple-700 text-white">Увійти</Button>
               <Button type="button" variant="link" onClick={()=>navigate('/')} className="w-full mt-2 text-slate-400">На головну</Button>
             </form>
@@ -1237,10 +1308,11 @@ function AdminHub() {
 }
 
 // ── Page: Admin Settings (Manage Trainers, Classes & Subscription Plans) ────
-function AdminSettingsPage({ trainers, setTrainers, classTypes, setClassTypes, plans, setPlans }: {
+function AdminSettingsPage({ trainers, setTrainers, classTypes, setClassTypes, plans, setPlans, promoCodes, setPromoCodes }: {
   trainers: string[], setTrainers: React.Dispatch<React.SetStateAction<string[]>>,
   classTypes: string[], setClassTypes: React.Dispatch<React.SetStateAction<string[]>>,
-  plans: SubscriptionPlan[], setPlans: React.Dispatch<React.SetStateAction<SubscriptionPlan[]>>
+  plans: SubscriptionPlan[], setPlans: React.Dispatch<React.SetStateAction<SubscriptionPlan[]>>,
+  promoCodes: PromoCode[], setPromoCodes: React.Dispatch<React.SetStateAction<PromoCode[]>>
 }) {
   const [newTrainer, setNewTrainer] = useState('')
   const [newClass, setNewClass] = useState('')
@@ -1251,6 +1323,34 @@ function AdminSettingsPage({ trainers, setTrainers, classTypes, setClassTypes, p
   const [newPlanSessions, setNewPlanSessions] = useState('')
   const [newPlanPrice, setNewPlanPrice] = useState('')
   const [newPlanDays, setNewPlanDays] = useState('30')
+
+  // Promo code generation
+  const [promoSelectedPlanId, setPromoSelectedPlanId] = useState('')
+  const [copiedCode, setCopiedCode] = useState<string|null>(null)
+
+  const generateCode = () => {
+    if (!promoSelectedPlanId) return
+    const plan = plans.find(p => p.id === promoSelectedPlanId)
+    if (!plan) return
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    const code = 'BRAVE-' + Array.from({length: 8}, () => chars[Math.floor(Math.random()*chars.length)]).join('')
+    const promo: PromoCode = {
+      code,
+      plan_id: plan.id,
+      plan_name: plan.name,
+      sessions: plan.sessions,
+      duration_days: plan.duration_days,
+      created_at: new Date().toISOString(),
+      used: false
+    }
+    setPromoCodes(prev => [promo, ...prev])
+  }
+
+  const copyCode = (code: string) => {
+    navigator.clipboard.writeText(code)
+    setCopiedCode(code)
+    setTimeout(() => setCopiedCode(null), 2000)
+  }
 
   const handleAddTrainer = (e: React.FormEvent) => {
     e.preventDefault()
@@ -1371,6 +1471,69 @@ function AdminSettingsPage({ trainers, setTrainers, classTypes, setClassTypes, p
                 </div>
               ))}
               {plans.length === 0 && <p className="text-sm text-slate-400 italic">Жодного абонементу. Створіть перший!</p>}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Promo Codes Panel */}
+        <Card className="md:col-span-1 lg:col-span-3">
+          <CardHeader className="bg-emerald-50/50 pb-4 border-b mb-4">
+            <CardTitle className="flex items-center gap-2"><Ticket className="w-5 h-5 text-emerald-600" /> Промо-коди (Подарунки)</CardTitle>
+            <CardDescription>Генеруйте унікальні коди абонементів для друзів або в подарунок. Клієнт вводить код в особистому кабінеті.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Generator */}
+              <div className="space-y-3">
+                <p className="text-sm font-semibold text-slate-600">Оберіть план та згенеруйте код:</p>
+                <select
+                  value={promoSelectedPlanId}
+                  onChange={e => setPromoSelectedPlanId(e.target.value)}
+                  className={inputClasses}
+                >
+                  <option value="">— Оберіть абонемент —</option>
+                  {plans.map(p => (
+                    <option key={p.id} value={p.id}>{p.name} ({p.sessions} занять, {p.price}₴)</option>
+                  ))}
+                </select>
+                <Button
+                  onClick={generateCode}
+                  disabled={!promoSelectedPlanId}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
+                >
+                  <Plus className="w-4 h-4 mr-1" /> Згенерувати код
+                </Button>
+              </div>
+
+              {/* Code list */}
+              <div className="space-y-2 max-h-72 overflow-y-auto">
+                {promoCodes.length === 0 && <p className="text-sm text-slate-400 italic">Ще немає жодного коду.</p>}
+                {promoCodes.map(pc => (
+                  <div key={pc.code} className={`p-3 rounded-xl border flex items-center justify-between gap-2 text-sm ${
+                    pc.used ? 'bg-slate-50 border-slate-200 opacity-60' : 'bg-emerald-50 border-emerald-200'
+                  }`}>
+                    <div className="min-w-0">
+                      <p className="font-mono font-bold text-slate-800 tracking-wider">{pc.code}</p>
+                      <p className="text-xs text-slate-500">{pc.plan_name}</p>
+                      {pc.used && <p className="text-xs text-red-500 mt-0.5">Використано{pc.used_by ? ` — ${pc.used_by}` : ''}</p>}
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      {!pc.used && (
+                        <button
+                          onClick={() => copyCode(pc.code)}
+                          className="px-2 py-1 rounded text-xs bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                        >
+                          {copiedCode === pc.code ? '✓ Скопійовано' : 'Копіювати'}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => { if(confirm('Видалити код?')) setPromoCodes(prev => prev.filter(x => x.code !== pc.code)) }}
+                        className="text-red-500 hover:text-white hover:bg-red-500 px-2 py-1 rounded text-xs transition-colors"
+                      >Видалити</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -1649,6 +1812,9 @@ export default function App() {
   // ── Subscription Plans (Admin-managed) ──
   const [plans, setPlans] = usePersistentState<SubscriptionPlan[]>('brave_plans', DEFAULT_PLANS)
 
+  // ── Promo Codes (Admin-generated) ──
+  const [promoCodes, setPromoCodes] = usePersistentState<PromoCode[]>('brave_promo_codes', [])
+
   // ── Client Auth & Data ──
   const [clients, setClients] = usePersistentState<Client[]>('brave_clients', [])
   const [currentClientId, setCurrentClientId] = usePersistentState<string | null>('brave_current_client', null)
@@ -1666,13 +1832,13 @@ export default function App() {
         <Route path="/book/:id" element={<BookingPage lessons={lessons} setLessons={setLessons} currentClient={currentClient} setClients={setClients} plans={plans} onClientLogout={handleClientLogout} />} />
         <Route path="/cancel/:id" element={<CancelBookingPage lessons={lessons} setLessons={setLessons} />} />
         <Route path="/auth" element={<AuthPage clients={clients} setClients={setClients} setCurrentClientId={setCurrentClientId} />} />
-        <Route path="/dashboard" element={<ClientDashboardPage currentClient={currentClient} setClients={setClients} onClientLogout={handleClientLogout} plans={plans} />} />
+        <Route path="/dashboard" element={<ClientDashboardPage currentClient={currentClient} setClients={setClients} onClientLogout={handleClientLogout} plans={plans} promoCodes={promoCodes} setPromoCodes={setPromoCodes} />} />
 
         {/* Admin Section */}
         <Route path="/admin" element={<AdminLayout isAdminLogged={isAdminLogged} setIsAdminLogged={setIsAdminLogged} />}>
           <Route index element={<AdminHub />} />
           <Route path="schedule" element={<AdminSchedulePage lessons={lessons} setLessons={setLessons} trainers={trainers} classTypes={classTypes} />} />
-          <Route path="settings" element={<AdminSettingsPage trainers={trainers} setTrainers={setTrainers} classTypes={classTypes} setClassTypes={setClassTypes} plans={plans} setPlans={setPlans} />} />
+          <Route path="settings" element={<AdminSettingsPage trainers={trainers} setTrainers={setTrainers} classTypes={classTypes} setClassTypes={setClassTypes} plans={plans} setPlans={setPlans} promoCodes={promoCodes} setPromoCodes={setPromoCodes} />} />
         </Route>
       </Routes>
     </BrowserRouter>
