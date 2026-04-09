@@ -21,6 +21,7 @@ import {
 } from './components/ui/dialog'
 import { Calendar } from './components/ui/calendar'
 import { cn } from './lib/utils'
+import { supabase } from './lib/supabase'
 import logoImg from './assets/logo.png'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -806,32 +807,51 @@ function AuthPage({ clients, setClients, setCurrentClientId }: {
   const [showPass, setShowPass] = useState(false)
   const [error, setError] = useState('')
 
-  const handleLogin = (e: React.FormEvent) => {
+  const [loading, setLoading] = useState(false)
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    const client = clients.find(c => c.email.toLowerCase() === email.toLowerCase() && c.password === password)
-    if (!client) {
+    setLoading(true)
+    const { data, error: authError } = await supabase.auth.signInWithPassword({ email, password })
+    setLoading(false)
+    if (authError) {
       setError('Невірний email або пароль')
       return
     }
-    setCurrentClientId(client.id)
+    // Sync client profile with localStorage
+    let client = clients.find(c => c.id === data.user.id)
+    if (!client) {
+      const { data: profile } = await supabase.from('User').select('*').eq('id', data.user.id).single()
+      if (profile) {
+        client = { id: profile.id, name: profile.name, email: profile.email, phone: profile.phone, password: '', subscriptions: [], bookings: [] }
+        setClients(prev => [...prev, client!])
+      }
+    }
+    if (client) setCurrentClientId(client.id)
     navigate(redirectTo)
   }
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    if (clients.some(c => c.email.toLowerCase() === email.toLowerCase())) {
-      setError('Користувач з таким email вже існує')
+    setLoading(true)
+    // 1. Create Supabase Auth user
+    const { data, error: signUpError } = await supabase.auth.signUp({ email, password })
+    if (signUpError) {
+      setLoading(false)
+      if (signUpError.message.includes('already registered')) setError('Цей email вже зареєстровано')
+      else setError(signUpError.message)
       return
     }
-    const newClient: Client = {
-      id: Math.random().toString(36).substr(2, 9),
-      name, email, phone, password,
-      subscriptions: [], bookings: []
-    }
+    const userId = data.user!.id
+    // 2. Insert profile into User table
+    await supabase.from('User').insert({ id: userId, email, name, phone, role: 'CLIENT' })
+    // 3. Add to local clients state
+    const newClient: Client = { id: userId, name, email, phone, password: '', subscriptions: [], bookings: [] }
     setClients(prev => [...prev, newClient])
-    setCurrentClientId(newClient.id)
+    setCurrentClientId(userId)
+    setLoading(false)
     navigate(redirectTo)
   }
 
@@ -885,8 +905,8 @@ function AuthPage({ clients, setClients, setCurrentClientId }: {
                     </button>
                   </div>
                 </div>
-                <Button type="submit" className="w-full h-11 bg-[#DDA343] hover:bg-[#C89338] text-white text-base font-bold">
-                  Увійти
+                <Button type="submit" disabled={loading} className="w-full h-11 bg-[#DDA343] hover:bg-[#C89338] text-white text-base font-bold">
+                  {loading ? 'Завантаження...' : 'Увійти'}
                 </Button>
               </form>
             ) : (
@@ -912,8 +932,8 @@ function AuthPage({ clients, setClients, setCurrentClientId }: {
                     </button>
                   </div>
                 </div>
-                <Button type="submit" className="w-full h-11 bg-[#DDA343] hover:bg-[#C89338] text-white text-base font-bold">
-                  Зареєструватись
+                <Button type="submit" disabled={loading} className="w-full h-11 bg-[#DDA343] hover:bg-[#C89338] text-white text-base font-bold">
+                  {loading ? 'Реєстрація...' : 'Зареєструватись'}
                 </Button>
               </form>
             )}
@@ -1823,7 +1843,32 @@ export default function App() {
     clients.find(c => c.id === currentClientId) || null
   , [clients, currentClientId])
 
-  const handleClientLogout = () => setCurrentClientId(null)
+  // Restore Supabase session on page reload
+  useEffect(() => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (session?.user) {
+        const uid = session.user.id
+        // If no local client record yet, fetch from Supabase User table
+        if (!clients.find(c => c.id === uid)) {
+          const { data: profile } = await supabase.from('User').select('*').eq('id', uid).single()
+          if (profile) {
+            const restoredClient: Client = { id: profile.id, name: profile.name, email: profile.email, phone: profile.phone, password: '', subscriptions: [], bookings: [] }
+            setClients(prev => {
+              if (prev.find(c => c.id === uid)) return prev
+              return [...prev, restoredClient]
+            })
+          }
+        }
+        setCurrentClientId(uid)
+      }
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const handleClientLogout = async () => {
+    await supabase.auth.signOut()
+    setCurrentClientId(null)
+  }
 
   return (
     <BrowserRouter>
