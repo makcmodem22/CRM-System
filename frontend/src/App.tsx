@@ -9,7 +9,7 @@ import {
   Calendar as CalendarIcon, Clock, Users, User,
   AlertTriangle, X, LogOut, Phone, Camera, Plus, Database, Settings,
   CreditCard, Mail, Lock, ChevronRight, Check, Crown, Eye, EyeOff,
-  Ticket, Award, Star
+  Ticket, Award, Star, BarChart3, TrendingUp, DollarSign, Wallet
 } from 'lucide-react'
 
 import { Button } from './components/ui/button'
@@ -1303,7 +1303,7 @@ function AdminHub() {
     <div className="container p-4 sm:p-12 flex flex-col items-center justify-center mt-10">
       <img src={logoImg} alt="" className="w-16 h-16 rounded-full shadow-lg mb-4" />
       <h1 className="text-3xl font-bold mb-8 text-slate-800">Меню Адміністратора</h1>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-4xl">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl">
         <Card className="cursor-pointer hover:border-purple-300 hover:shadow-md transition-all group" onClick={() => navigate('/admin/schedule')}>
           <CardContent className="flex flex-col items-center p-10 text-center gap-4">
              <div className="w-20 h-20 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -1324,6 +1324,18 @@ function AdminHub() {
              <div>
                <h2 className="text-xl font-bold">База Даних</h2>
                <p className="text-sm text-slate-500 mt-2">Тренери, формати занять та управління абонементами.</p>
+             </div>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer hover:border-emerald-300 hover:shadow-md transition-all group" onClick={() => navigate('/admin/stats')}>
+          <CardContent className="flex flex-col items-center p-10 text-center gap-4">
+             <div className="w-20 h-20 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+               <BarChart3 className="w-10 h-10" />
+             </div>
+             <div>
+               <h2 className="text-xl font-bold">Статистика</h2>
+               <p className="text-sm text-slate-500 mt-2">Зарплати тренерів, доходи адміна та детальна аналітика.</p>
              </div>
           </CardContent>
         </Card>
@@ -1666,6 +1678,443 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
   )
 }
 
+// ── Page: Admin Stats (Trainer Salary & Analytics) ──────────────────────────
+function AdminStatsPage({ lessons, clients, trainers, plans }: {
+  lessons: ActualLesson[],
+  clients: Client[],
+  trainers: string[],
+  plans: SubscriptionPlan[]
+}) {
+  const navigate = useNavigate()
+  const [selectedMonth, setSelectedMonth] = useState(() => format(new Date(), 'yyyy-MM'))
+  const [expandedTrainer, setExpandedTrainer] = useState<string | null>(null)
+
+  // Parse selected month range
+  const monthStart = useMemo(() => {
+    const [y, m] = selectedMonth.split('-').map(Number)
+    return new Date(y, m - 1, 1)
+  }, [selectedMonth])
+  const monthEnd = useMemo(() => {
+    const [y, m] = selectedMonth.split('-').map(Number)
+    return new Date(y, m, 0, 23, 59, 59)
+  }, [selectedMonth])
+
+  // Filter lessons for the selected month that were booked (booked_count > 0)
+  const monthLessons = useMemo(() => {
+    return lessons.filter(l => {
+      const t = l.start_timestamp.getTime()
+      return t >= monthStart.getTime() && t <= monthEnd.getTime()
+    })
+  }, [lessons, monthStart, monthEnd])
+
+  // Build a map: for each client, find their active subscription at the time of booking
+  // We'll compute per-lesson revenue split for each trainer
+  interface TrainerStats {
+    trainerName: string
+    totalLessons: number
+    totalBookings: number
+    singleVisitBookings: number
+    subscriptionBookings: number
+    trainerEarnings: number
+    adminEarnings: number
+    totalRevenue: number
+    lessonDetails: {
+      lessonId: string
+      className: string
+      date: Date
+      bookedCount: number
+      singleRevenue: number
+      subRevenue: number
+      trainerShare: number
+      adminShare: number
+    }[]
+  }
+
+  const trainerStatsMap = useMemo(() => {
+    const statsMap = new Map<string, TrainerStats>()
+
+    // Initialize all trainers
+    trainers.forEach(name => {
+      statsMap.set(name, {
+        trainerName: name,
+        totalLessons: 0,
+        totalBookings: 0,
+        singleVisitBookings: 0,
+        subscriptionBookings: 0,
+        trainerEarnings: 0,
+        adminEarnings: 0,
+        totalRevenue: 0,
+        lessonDetails: []
+      })
+    })
+
+    // Count subscription bookings per trainer from client data
+    // Build a map of how many lessons each trainer had booked via subscription
+    const subBookingsByTrainer = new Map<string, number>()
+    clients.forEach(client => {
+      client.bookings.forEach(booking => {
+        const bookingDate = new Date(booking.date)
+        if (bookingDate >= monthStart && bookingDate <= monthEnd) {
+          const count = subBookingsByTrainer.get(booking.trainerName) || 0
+          subBookingsByTrainer.set(booking.trainerName, count + 1)
+        }
+      })
+    })
+
+    monthLessons.forEach(lesson => {
+      let stats = statsMap.get(lesson.trainer_name)
+      if (!stats) {
+        stats = {
+          trainerName: lesson.trainer_name,
+          totalLessons: 0,
+          totalBookings: 0,
+          singleVisitBookings: 0,
+          subscriptionBookings: 0,
+          trainerEarnings: 0,
+          adminEarnings: 0,
+          totalRevenue: 0,
+          lessonDetails: []
+        }
+        statsMap.set(lesson.trainer_name, stats)
+      }
+
+      stats.totalLessons++
+      const bookings = lesson.booked_count
+      stats.totalBookings += bookings
+
+      // Estimate: check how many bookings for this lesson were subscription-based
+      // We use a heuristic: if the lesson is marked as booked by someone
+      // who has an active subscription, it's a subscription booking
+      // For simplicity, we count bookings from client records for that trainer in this month
+      // and the rest are single visits
+      const subBookingsForTrainer = subBookingsByTrainer.get(lesson.trainer_name) || 0
+      
+      // Distribute subscription bookings across lessons proportionally
+      const trainerMonthLessons = monthLessons.filter(l => l.trainer_name === lesson.trainer_name)
+      const subBookingsPerLesson = trainerMonthLessons.length > 0
+        ? Math.floor(subBookingsForTrainer / trainerMonthLessons.length)
+        : 0
+      
+      const subBookingsThisLesson = Math.min(subBookingsPerLesson, bookings)
+      const singleBookingsThisLesson = Math.max(0, bookings - subBookingsThisLesson)
+
+      stats.singleVisitBookings += singleBookingsThisLesson
+      stats.subscriptionBookings += subBookingsThisLesson
+
+      // Revenue calculation
+      // Single visit: 300₴ total, 50% each
+      const singleRevenue = singleBookingsThisLesson * SINGLE_VISIT_PRICE
+      const singleTrainerShare = singleRevenue * 0.5
+      const singleAdminShare = singleRevenue * 0.5
+
+      // Subscription: (plan_price / duration_days) / 2 per booking
+      // Find average plan price for estimation
+      let subRevenue = 0
+      let subTrainerShare = 0
+      let subAdminShare = 0
+      if (subBookingsThisLesson > 0 && plans.length > 0) {
+        // Use a weighted average of plan prices
+        const avgDailyRate = plans.reduce((sum, p) => sum + (p.price / p.duration_days), 0) / plans.length
+        const perBookingRevenue = avgDailyRate // daily rate for one session day
+        subRevenue = perBookingRevenue * subBookingsThisLesson
+        subTrainerShare = subRevenue / 2
+        subAdminShare = subRevenue / 2
+      }
+
+      const totalTrainerShare = singleTrainerShare + subTrainerShare
+      const totalAdminShare = singleAdminShare + subAdminShare
+
+      stats.trainerEarnings += totalTrainerShare
+      stats.adminEarnings += totalAdminShare
+      stats.totalRevenue += singleRevenue + subRevenue
+
+      stats.lessonDetails.push({
+        lessonId: lesson.id,
+        className: lesson.class_name,
+        date: lesson.start_timestamp,
+        bookedCount: bookings,
+        singleRevenue,
+        subRevenue,
+        trainerShare: totalTrainerShare,
+        adminShare: totalAdminShare
+      })
+    })
+
+    return statsMap
+  }, [monthLessons, trainers, clients, plans, monthStart, monthEnd])
+
+  const allStats = useMemo(() => Array.from(trainerStatsMap.values()).sort((a, b) => b.trainerEarnings - a.trainerEarnings), [trainerStatsMap])
+  const totalAdminEarnings = useMemo(() => allStats.reduce((s, t) => s + t.adminEarnings, 0), [allStats])
+  const totalTrainerPayout = useMemo(() => allStats.reduce((s, t) => s + t.trainerEarnings, 0), [allStats])
+  const totalRevenue = useMemo(() => allStats.reduce((s, t) => s + t.totalRevenue, 0), [allStats])
+  const totalBookings = useMemo(() => allStats.reduce((s, t) => s + t.totalBookings, 0), [allStats])
+
+  const monthLabel = format(monthStart, 'LLLL yyyy', { locale: uk })
+
+  return (
+    <div className="container p-4 sm:p-8 max-w-6xl mx-auto">
+      <Button variant="ghost" onClick={() => navigate('/admin')} className="mb-4">← Назад у меню</Button>
+      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between mb-8">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 className="w-6 h-6 text-emerald-600" /> Статистика та зарплати</h1>
+          <p className="text-sm text-slate-500 mt-1 capitalize">{monthLabel}</p>
+        </div>
+        <input
+          type="month"
+          value={selectedMonth}
+          onChange={e => setSelectedMonth(e.target.value)}
+          className={cn(inputClasses, 'w-48 bg-white shadow-sm')}
+        />
+      </div>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0 }}>
+          <Card className="border-0 shadow-lg bg-gradient-to-br from-emerald-500 to-emerald-600 text-white overflow-hidden relative">
+            <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-white/10" />
+            <CardContent className="p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
+                  <DollarSign className="w-4 h-4" />
+                </div>
+                <span className="text-xs font-semibold text-emerald-100 uppercase tracking-wider">Загальний дохід</span>
+              </div>
+              <p className="text-2xl font-black">{Math.round(totalRevenue).toLocaleString('uk-UA')} ₴</p>
+              <p className="text-xs text-emerald-200 mt-1">{totalBookings} бронювань</p>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
+          <Card className="border-0 shadow-lg bg-gradient-to-br from-[#1B3A6B] to-[#0F2548] text-white overflow-hidden relative">
+            <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-white/10" />
+            <CardContent className="p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
+                  <Crown className="w-4 h-4 text-[#DDA343]" />
+                </div>
+                <span className="text-xs font-semibold text-blue-200 uppercase tracking-wider">Дохід адміна</span>
+              </div>
+              <p className="text-2xl font-black text-[#DDA343]">{Math.round(totalAdminEarnings).toLocaleString('uk-UA')} ₴</p>
+              <p className="text-xs text-blue-300 mt-1">50% від усіх занять</p>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+          <Card className="border-0 shadow-lg bg-gradient-to-br from-violet-500 to-violet-600 text-white overflow-hidden relative">
+            <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-white/10" />
+            <CardContent className="p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
+                  <Wallet className="w-4 h-4" />
+                </div>
+                <span className="text-xs font-semibold text-violet-200 uppercase tracking-wider">Виплати тренерам</span>
+              </div>
+              <p className="text-2xl font-black">{Math.round(totalTrainerPayout).toLocaleString('uk-UA')} ₴</p>
+              <p className="text-xs text-violet-200 mt-1">{allStats.filter(s => s.totalBookings > 0).length} активних тренерів</p>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
+          <Card className="border-0 shadow-lg bg-gradient-to-br from-amber-500 to-orange-500 text-white overflow-hidden relative">
+            <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-white/10" />
+            <CardContent className="p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
+                  <TrendingUp className="w-4 h-4" />
+                </div>
+                <span className="text-xs font-semibold text-amber-100 uppercase tracking-wider">Всього занять</span>
+              </div>
+              <p className="text-2xl font-black">{allStats.reduce((s, t) => s + t.totalLessons, 0)}</p>
+              <p className="text-xs text-amber-200 mt-1">за {monthLabel}</p>
+            </CardContent>
+          </Card>
+        </motion.div>
+      </div>
+
+      {/* Salary Formula Explanation */}
+      <Card className="mb-8 border-slate-200 bg-slate-50/50">
+        <CardContent className="p-4">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+              <Settings className="w-4 h-4" />
+            </div>
+            <div className="text-sm text-slate-600 space-y-1">
+              <p className="font-semibold text-slate-800">Формула розрахунку зарплати:</p>
+              <p>• <b>Разове заняття ({SINGLE_VISIT_PRICE}₴):</b> 50% адмін ({SINGLE_VISIT_PRICE/2}₴) + 50% тренер ({SINGLE_VISIT_PRICE/2}₴)</p>
+              <p>• <b>Абонемент:</b> (ціна абонементу ÷ к-сть днів) ÷ 2 — одна частина адміну, інша тренеру за кожне проведене заняття</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Trainer Salary Table */}
+      <Card className="border-0 shadow-lg overflow-hidden">
+        <CardHeader className="bg-gradient-to-r from-slate-800 to-slate-900 text-white pb-4">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Users className="w-5 h-5 text-emerald-400" />
+            Зарплати тренерів — <span className="capitalize text-emerald-300">{monthLabel}</span>
+          </CardTitle>
+          <CardDescription className="text-slate-400 text-xs">Натисніть на тренера, щоб побачити деталі по кожному заняттю</CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          {allStats.length === 0 ? (
+            <div className="p-12 text-center text-slate-400">
+              <BarChart3 className="w-12 h-12 mx-auto mb-3 opacity-40" />
+              <p>Немає даних за цей місяць</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {allStats.map((stats, idx) => {
+                const isExpanded = expandedTrainer === stats.trainerName
+                const hasData = stats.totalBookings > 0
+                const maxEarnings = Math.max(...allStats.map(s => s.trainerEarnings), 1)
+                const barWidth = (stats.trainerEarnings / maxEarnings) * 100
+
+                return (
+                  <motion.div
+                    key={stats.trainerName}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: idx * 0.04 }}
+                  >
+                    <div
+                      className={cn(
+                        "p-5 cursor-pointer transition-colors",
+                        isExpanded ? "bg-emerald-50/50" : "hover:bg-slate-50",
+                        !hasData && "opacity-50"
+                      )}
+                      onClick={() => setExpandedTrainer(isExpanded ? null : stats.trainerName)}
+                    >
+                      <div className="flex items-center gap-4">
+                        {/* Avatar */}
+                        <div className={cn(
+                          "w-12 h-12 rounded-xl flex items-center justify-center text-lg font-bold shrink-0 shadow-sm",
+                          idx === 0 && hasData ? "bg-gradient-to-br from-[#DDA343] to-[#F0C75E] text-white" :
+                          idx === 1 && hasData ? "bg-gradient-to-br from-slate-400 to-slate-500 text-white" :
+                          idx === 2 && hasData ? "bg-gradient-to-br from-amber-600 to-amber-700 text-white" :
+                          "bg-slate-100 text-slate-400"
+                        )}>
+                          {stats.trainerName.charAt(0).toUpperCase()}
+                        </div>
+
+                        {/* Info */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-bold text-slate-900">{stats.trainerName}</h3>
+                            {idx === 0 && hasData && (
+                              <Badge className="bg-[#DDA343] text-white border-0 text-[9px] px-1.5">Топ</Badge>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-3 mt-1 text-xs text-slate-500">
+                            <span>{stats.totalLessons} занять</span>
+                            <span>{stats.totalBookings} бронювань</span>
+                            <span className="text-blue-500">{stats.singleVisitBookings} разових</span>
+                            <span className="text-purple-500">{stats.subscriptionBookings} абонемент</span>
+                          </div>
+                          {/* Earnings bar */}
+                          {hasData && (
+                            <div className="mt-2 flex items-center gap-3">
+                              <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                                <motion.div
+                                  initial={{ width: 0 }}
+                                  animate={{ width: `${barWidth}%` }}
+                                  transition={{ duration: 0.6, delay: idx * 0.05 }}
+                                  className="h-full bg-gradient-to-r from-emerald-400 to-emerald-500 rounded-full"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Salary Amount */}
+                        <div className="text-right shrink-0">
+                          <p className="text-xl font-black text-emerald-600">{Math.round(stats.trainerEarnings).toLocaleString('uk-UA')} ₴</p>
+                          <p className="text-[10px] text-slate-400 mt-0.5">зарплата тренера</p>
+                        </div>
+
+                        {/* Expand Arrow */}
+                        <ChevronRight className={cn("w-5 h-5 text-slate-300 transition-transform shrink-0", isExpanded && "rotate-90 text-emerald-500")} />
+                      </div>
+                    </div>
+
+                    {/* Expanded Details */}
+                    <AnimatePresence>
+                      {isExpanded && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.25 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="px-5 pb-5 pt-2 bg-slate-50/80">
+                            {/* Summary row */}
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                              <div className="p-3 bg-white rounded-xl border border-slate-200 text-center">
+                                <p className="text-lg font-black text-emerald-600">{Math.round(stats.trainerEarnings).toLocaleString('uk-UA')}₴</p>
+                                <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Тренер</p>
+                              </div>
+                              <div className="p-3 bg-white rounded-xl border border-slate-200 text-center">
+                                <p className="text-lg font-black text-[#DDA343]">{Math.round(stats.adminEarnings).toLocaleString('uk-UA')}₴</p>
+                                <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Адмін</p>
+                              </div>
+                              <div className="p-3 bg-white rounded-xl border border-slate-200 text-center">
+                                <p className="text-lg font-black text-slate-700">{Math.round(stats.totalRevenue).toLocaleString('uk-UA')}₴</p>
+                                <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Всього</p>
+                              </div>
+                              <div className="p-3 bg-white rounded-xl border border-slate-200 text-center">
+                                <p className="text-lg font-black text-blue-600">{stats.totalBookings}</p>
+                                <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Бронювань</p>
+                              </div>
+                            </div>
+
+                            {/* Detail Table */}
+                            {stats.lessonDetails.length > 0 && (
+                              <div className="rounded-xl overflow-hidden border border-slate-200">
+                                <table className="w-full text-sm">
+                                  <thead>
+                                    <tr className="bg-slate-100 text-slate-600 text-xs">
+                                      <th className="text-left p-3 font-semibold">Заняття</th>
+                                      <th className="text-center p-3 font-semibold">Дата</th>
+                                      <th className="text-center p-3 font-semibold">Записи</th>
+                                      <th className="text-right p-3 font-semibold">Тренер</th>
+                                      <th className="text-right p-3 font-semibold">Адмін</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="bg-white divide-y divide-slate-100">
+                                    {stats.lessonDetails.map(detail => (
+                                      <tr key={detail.lessonId} className="hover:bg-slate-50 transition-colors">
+                                        <td className="p-3 font-semibold text-slate-800">{detail.className}</td>
+                                        <td className="p-3 text-center text-slate-500 text-xs">{format(detail.date, 'dd.MM HH:mm')}</td>
+                                        <td className="p-3 text-center">
+                                          <Badge variant="outline" className="text-[10px]">{detail.bookedCount}</Badge>
+                                        </td>
+                                        <td className="p-3 text-right font-bold text-emerald-600">{Math.round(detail.trainerShare)}₴</td>
+                                        <td className="p-3 text-right font-bold text-[#DDA343]">{Math.round(detail.adminShare)}₴</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </motion.div>
+                )
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
 // ── Page: Admin Schedule Builder ─────────────────────────────────────────────
 function AdminSchedulePage({ lessons, setLessons, trainers, classTypes }: { lessons: ActualLesson[], setLessons: React.Dispatch<React.SetStateAction<ActualLesson[]>>, trainers: string[], classTypes: string[] }) {
   const navigate = useNavigate()
@@ -1889,6 +2338,7 @@ export default function App() {
           <Route index element={<AdminHub />} />
           <Route path="schedule" element={<AdminSchedulePage lessons={lessons} setLessons={setLessons} trainers={trainers} classTypes={classTypes} />} />
           <Route path="settings" element={<AdminSettingsPage trainers={trainers} setTrainers={setTrainers} classTypes={classTypes} setClassTypes={setClassTypes} plans={plans} setPlans={setPlans} promoCodes={promoCodes} setPromoCodes={setPromoCodes} />} />
+          <Route path="stats" element={<AdminStatsPage lessons={lessons} clients={clients} trainers={trainers} plans={plans} />} />
         </Route>
       </Routes>
     </BrowserRouter>
