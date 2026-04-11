@@ -379,8 +379,8 @@ function ClientPage({ lessons, currentClient, onClientLogout, reloadAppData }: {
             <CardHeader className="pb-2 border-b border-white/[0.06] bg-muted/40">
               <CardTitle className="text-xs font-bold text-brand-gold uppercase tracking-[0.15em]">Оберіть дату</CardTitle>
             </CardHeader>
-            <CardContent className="flex justify-center overflow-x-auto pt-3 px-1 pb-2 sm:px-3">
-              <Calendar mode="single" selected={selectedDate} onSelect={setSelectedDate} className="mx-auto w-min max-w-full" />
+            <CardContent className="flex justify-center pt-3 px-2 pb-3 sm:px-3">
+              <Calendar mode="single" selected={selectedDate} onSelect={setSelectedDate} />
             </CardContent>
           </Card>
 

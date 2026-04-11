@@ -10,33 +10,35 @@ function Calendar({
   className,
   classNames,
   showOutsideDays = true,
+  navLayout,
   ...props
 }: CalendarProps) {
   return (
     <DayPicker
       showOutsideDays={showOutsideDays}
-      className={cn("p-2 sm:p-3 min-w-0", className)}
+      /** Puts prev/next beside the caption so they stay on the calendar, not a full-width top bar. */
+      navLayout={navLayout ?? "around"}
+      className={cn("p-2 sm:p-3 w-fit max-w-full mx-auto", className)}
       classNames={{
-        months: "flex flex-col sm:flex-row gap-4 w-full justify-center",
-        month: "flex flex-col gap-4 w-full min-w-0",
-        month_caption:
-          "flex justify-center pt-1 relative items-center w-full px-10 sm:px-11 min-h-9",
-        caption_label: "text-sm font-semibold text-center px-1",
-        nav: "flex items-center gap-1",
+        months: "flex flex-col gap-4 sm:flex-row sm:justify-center",
+        month:
+          "grid w-max max-w-full [grid-template-columns:auto_minmax(0,1fr)_auto] items-center gap-x-1 gap-y-2",
+        month_caption: "flex min-w-0 justify-center px-0.5",
+        caption_label: "truncate text-center text-sm font-semibold tabular-nums",
         button_previous: cn(
-          "absolute left-0.5 top-1/2 z-10 -translate-y-1/2 h-8 w-8 shrink-0 bg-background/95 p-0 opacity-80 hover:opacity-100 inline-flex items-center justify-center rounded-md border border-input shadow-sm hover:bg-accent transition-opacity sm:left-1 sm:h-7 sm:w-7"
+          "h-8 w-8 shrink-0 bg-background p-0 opacity-90 hover:opacity-100 inline-flex items-center justify-center rounded-md border border-input shadow-sm hover:bg-accent transition-opacity sm:h-7 sm:w-7",
         ),
         button_next: cn(
-          "absolute right-0.5 top-1/2 z-10 -translate-y-1/2 h-8 w-8 shrink-0 bg-background/95 p-0 opacity-80 hover:opacity-100 inline-flex items-center justify-center rounded-md border border-input shadow-sm hover:bg-accent transition-opacity sm:right-1 sm:h-7 sm:w-7"
+          "h-8 w-8 shrink-0 bg-background p-0 opacity-90 hover:opacity-100 inline-flex items-center justify-center rounded-md border border-input shadow-sm hover:bg-accent transition-opacity sm:h-7 sm:w-7",
         ),
-        month_grid: "w-full border-collapse mx-auto",
-        weekdays: "flex w-full justify-center",
+        month_grid: "col-span-3 w-full border-collapse",
+        weekdays: "flex w-full justify-center gap-0.5 sm:gap-1",
         weekday:
-          "text-muted-foreground rounded-md w-8 font-normal text-[0.7rem] text-center sm:w-9 sm:text-[0.8rem]",
-        week: "flex w-full mt-2 justify-center",
-        day: "h-8 w-8 text-center text-sm p-0 relative sm:h-9 sm:w-9",
+          "w-8 shrink-0 text-center text-[0.7rem] font-normal text-muted-foreground sm:w-9 sm:text-[0.8rem]",
+        week: "mt-2 flex w-full justify-center gap-0.5 sm:gap-1",
+        day: "relative h-8 w-8 shrink-0 p-0 text-center text-sm sm:h-9 sm:w-9",
         day_button: cn(
-          "h-8 w-8 p-0 font-normal rounded-md transition-colors hover:bg-accent hover:text-accent-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 aria-selected:opacity-100 inline-flex items-center justify-center w-full sm:h-9 sm:w-9"
+          "flex h-8 w-8 items-center justify-center rounded-md p-0 font-normal transition-colors hover:bg-accent hover:text-accent-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 aria-selected:opacity-100 sm:h-9 sm:w-9",
         ),
         selected:
           "bg-brand-gold text-brand-charcoal hover:bg-brand-gold-light hover:text-brand-charcoal focus:bg-brand-gold focus:text-brand-charcoal rounded-md shadow-sm font-semibold",
