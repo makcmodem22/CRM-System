@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Env and Next build output (never commit secrets)
+.env
+.env.*
+!.env.example
+.next
+.vercel
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

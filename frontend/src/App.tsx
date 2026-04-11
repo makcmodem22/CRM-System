@@ -1,14 +1,14 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { BrowserRouter, Routes, Route, useNavigate, useParams, Link, Outlet, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, addDays } from 'date-fns'
+import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, addDays, startOfMonth } from 'date-fns'
 import { uk } from 'date-fns/locale'
-// @ts-ignore
+// @ts-expect-error — dom-to-image-more ships without TypeScript types
 import domtoimage from 'dom-to-image-more'
 import {
   Calendar as CalendarIcon, Clock, Users, User,
   AlertTriangle, X, LogOut, Phone, Camera, Plus, Database, Settings,
-  CreditCard, Mail, Lock, ChevronRight, Check, Crown, Eye, EyeOff,
+  CreditCard, Mail, Lock, ChevronDown, ChevronLeft, ChevronRight, Check, Crown, Eye, EyeOff,
   Ticket, Award, Star, BarChart3, TrendingUp, DollarSign, Wallet
 } from 'lucide-react'
 
@@ -20,9 +20,13 @@ import {
   DialogFooter, DialogHeader, DialogTitle
 } from './components/ui/dialog'
 import { Calendar } from './components/ui/calendar'
+import { Popover, PopoverContent, PopoverTrigger } from './components/ui/popover'
 import { cn } from './lib/utils'
 import { supabase } from './lib/supabase'
+import * as studioApi from './lib/studioApi'
 import logoImg from './assets/logo.png'
+
+const logoSrc = typeof logoImg === 'string' ? logoImg : logoImg.src
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type LessonStatus = 'SCHEDULED' | 'CANCELLED' | 'COMPLETED'
@@ -57,6 +61,8 @@ interface ClientSubscription {
   used_sessions: number
   purchased_at: string
   expires_at: string
+  /** Paid plan vs promo / gift certificate — used when recording a booking */
+  source?: 'purchase' | 'promo'
 }
 
 interface ClientBookingRecord {
@@ -64,6 +70,14 @@ interface ClientBookingRecord {
   className: string
   date: string
   trainerName: string
+  /** Set when the visit was paid with a subscription; gift = promo / certificate */
+  subscription_kind?: 'paid' | 'gift'
+  /** Which subscription had a visit deducted — restored on cancel */
+  subscription_id?: string
+  /** Gift/certificate: plan price ÷ sessions at booking (e.g. 3000/15 = 200₴ per visit) — coach share is half of this */
+  certificate_session_value?: number
+  /** Any subscription visit: retail value per visit (price ÷ sessions) for salary stats — gift or paid */
+  subscription_session_value?: number
 }
 
 interface Client {
@@ -87,6 +101,20 @@ interface PromoCode {
   used_by?: string // client email
 }
 
+/** Marks lessons the current client has a profile booking for (for UI / cancel link). */
+function mergeLessonsForViewer(lessons: ActualLesson[], client: Client | null): ActualLesson[] {
+  if (!client) {
+    return lessons.map(l => ({ ...l, is_booked_by_me: false, my_booking_name: undefined, my_booking_email: undefined }))
+  }
+  const mine = new Set(client.bookings.map(b => b.lessonId))
+  return lessons.map(l => ({
+    ...l,
+    is_booked_by_me: mine.has(l.id),
+    my_booking_name: mine.has(l.id) ? client.name : undefined,
+    my_booking_email: mine.has(l.id) ? client.email : undefined,
+  }))
+}
+
 // ── Constants ──────────────────────────────────────────────────────────────
 const SINGLE_VISIT_PRICE = 300
 
@@ -105,12 +133,14 @@ const makeDate = (baseDate: Date, h: number, m: number): Date => {
 }
 
 // ── Utility: Persistent State ──────────────────────────────────────────────
-function usePersistentState<T>(key: string, initialValue: T, reviver?: (key: string, value: any) => any) {
+function usePersistentState<T>(key: string, initialValue: T, reviver?: (this: unknown, key: string, value: unknown) => unknown) {
   const [state, setState] = useState<T>(() => {
     try {
        const stored = localStorage.getItem(key)
-       if (stored) return JSON.parse(stored, reviver)
-    } catch(_e) {}
+       if (stored) return JSON.parse(stored, reviver) as T
+    } catch {
+      /* ignore corrupt or missing storage */
+    }
     return initialValue
   })
 
@@ -121,19 +151,107 @@ function usePersistentState<T>(key: string, initialValue: T, reviver?: (key: str
   return [state, setState] as const
 }
 
-const dateReviver = (_key: string, value: any) => {
-  if (_key === 'start_timestamp' || _key === 'end_timestamp') return new Date(value)
-  return value
+/** Promo / gift certificate subscription (not a purchased package). */
+function isGiftLikeSubscription(s: ClientSubscription): boolean {
+  return (
+    s.source === 'promo' ||
+    /\bподарунок\b/i.test(s.plan_name) ||
+    s.plan_name.includes('(Подарунок)')
+  )
+}
+
+function listActiveSubscriptions(client: Client | null): ClientSubscription[] {
+  if (!client) return []
+  const now = new Date()
+  return client.subscriptions.filter(s => {
+    const expires = new Date(s.expires_at)
+    return s.used_sessions < s.total_sessions && now <= expires
+  })
+}
+
+/** Stats: paid vs gift when `subscription_kind` is missing (bookings from before the field existed). */
+function inferSubscriptionBookingKindForStats(client: Client, booking: ClientBookingRecord): 'paid' | 'gift' {
+  /** Linked subscription is source of truth — fixes wrong `subscription_kind` on the row. */
+  if (booking.subscription_id) {
+    const sub = client.subscriptions.find(s => s.id === booking.subscription_id)
+    if (sub) return isGiftLikeSubscription(sub) ? 'gift' : 'paid'
+  }
+  if (booking.subscription_kind === 'gift') return 'gift'
+  if (booking.certificate_session_value != null && booking.certificate_session_value > 0) return 'gift'
+  if (booking.subscription_kind === 'paid') return 'paid'
+  const t = new Date(booking.date).getTime()
+  const covering = client.subscriptions.filter(s => {
+    const start = new Date(s.purchased_at).getTime()
+    const end = new Date(s.expires_at).getTime()
+    return t >= start && t <= end
+  })
+  if (covering.length === 0) return 'paid'
+  const looksLikeGift = covering.some(isGiftLikeSubscription)
+  return looksLikeGift ? 'gift' : 'paid'
+}
+
+/** Imputed ₴ value of one certificate visit = package price ÷ visits in package (e.g. 3000/15). */
+function certificateSessionValueForGiftBooking(client: Client, booking: ClientBookingRecord, plans: SubscriptionPlan[]): number {
+  if (booking.subscription_session_value != null && booking.subscription_session_value > 0) {
+    return booking.subscription_session_value
+  }
+  if (booking.certificate_session_value != null && booking.certificate_session_value > 0) {
+    return booking.certificate_session_value
+  }
+  if (inferSubscriptionBookingKindForStats(client, booking) !== 'gift') return 0
+  let sub: ClientSubscription | undefined
+  if (booking.subscription_id) {
+    sub = client.subscriptions.find(s => s.id === booking.subscription_id)
+  } else {
+    const t = new Date(booking.date).getTime()
+    const candidates = client.subscriptions.filter(s => {
+      const start = new Date(s.purchased_at).getTime()
+      const end = new Date(s.expires_at).getTime()
+      return t >= start && t <= end
+    })
+    sub = candidates.find(isGiftLikeSubscription) ?? candidates[0]
+  }
+  if (!sub) return 0
+  const plan = plans.find(p => p.id === sub.plan_id)
+  if (plan && plan.sessions > 0) return plan.price / plan.sessions
+  if (sub.total_sessions > 0) return SINGLE_VISIT_PRICE
+  return 0
+}
+
+/** Retail ₴ per visit (plan price ÷ sessions) — same economics for paid and gift/certificate for coach share. */
+function subscriptionVisitRetailValue(client: Client, booking: ClientBookingRecord, plans: SubscriptionPlan[]): number {
+  if (booking.subscription_session_value != null && booking.subscription_session_value > 0)
+    return booking.subscription_session_value
+  if (booking.certificate_session_value != null && booking.certificate_session_value > 0)
+    return booking.certificate_session_value
+  if (booking.subscription_id) {
+    const sub = client.subscriptions.find(s => s.id === booking.subscription_id)
+    if (sub) {
+      const plan = plans.find(p => p.id === sub.plan_id)
+      if (plan && plan.sessions > 0) return plan.price / plan.sessions
+      if (sub.total_sessions > 0) return SINGLE_VISIT_PRICE
+    }
+  }
+  if (inferSubscriptionBookingKindForStats(client, booking) === 'gift')
+    return certificateSessionValueForGiftBooking(client, booking, plans)
+  return 0
+}
+
+/** True only for the logged-in client — not a global flag on the lesson. Phone is not used; email + profile bookings are. */
+function isLessonBookedByCurrentClient(lesson: ActualLesson, client: Client | null): boolean {
+  if (!client) return false
+  if (client.bookings.some(b => b.lessonId === lesson.id)) return true
+  const mine = client.email?.trim().toLowerCase()
+  const onLesson = lesson.my_booking_email?.trim().toLowerCase()
+  return !!(lesson.is_booked_by_me && mine && onLesson && mine === onLesson)
 }
 
 // ── Helper: Get active subscription ────────────────────────────────────────
+/** Prefer certificate / promo over a purchased plan so «За абонементом» burns the right balance. */
 function getActiveSubscription(client: Client | null): ClientSubscription | null {
-  if (!client) return null
-  const now = new Date()
-  return client.subscriptions.find(s => {
-    const expires = new Date(s.expires_at)
-    return s.used_sessions < s.total_sessions && now <= expires
-  }) || null
+  const actives = listActiveSubscriptions(client)
+  if (actives.length === 0) return null
+  return actives.find(isGiftLikeSubscription) ?? actives[0]
 }
 
 // ── Shared Header ──────────────────────────────────────────────────────────
@@ -154,7 +272,7 @@ function Header({ role, onLogout, currentClient, onClientLogout }: {
     <header className="sticky top-0 z-40 border-b border-white/[0.08] bg-[#0f1624]/90 text-foreground shadow-lg shadow-black/30 backdrop-blur-xl">
       <div className="container flex h-[4.25rem] items-center justify-between px-4 sm:px-8">
         <Link to={role === 'ADMIN' ? '/admin' : '/'} className="flex gap-3 items-center group">
-          <img src={logoImg} alt="Brave! Yoga" className="w-11 h-11 rounded-full object-cover ring-2 ring-brand-gold/40 shadow-md" />
+          <img src={logoSrc} alt="Brave! Yoga" className="w-11 h-11 rounded-full object-cover ring-2 ring-brand-gold/40 shadow-md" />
           <span className="flex flex-col leading-none gap-0.5">
             <span className="font-brand-script text-2xl text-brand-gold">Brave!</span>
             <span className="font-brand-sans text-[0.65rem] text-foreground/85 tracking-[0.2em]">Yoga</span>
@@ -207,11 +325,11 @@ function Header({ role, onLogout, currentClient, onClientLogout }: {
 }
 
 // ── Page: Client Home (Public) ──────────────────────────────────────────────
-function ClientPage({ lessons, setLessons, currentClient, onClientLogout }: {
+function ClientPage({ lessons, currentClient, onClientLogout, reloadAppData }: {
   lessons: ActualLesson[],
-  setLessons: React.Dispatch<React.SetStateAction<ActualLesson[]>>,
   currentClient: Client | null,
-  onClientLogout: () => void
+  onClientLogout: () => void,
+  reloadAppData: () => Promise<void>,
 }) {
   const navigate = useNavigate()
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date())
@@ -230,10 +348,22 @@ function ClientPage({ lessons, setLessons, currentClient, onClientLogout }: {
   }
 
   const handleConfirmCancel = async () => {
-    if (!cancelLesson || cancelBlocked) return
+    if (!cancelLesson || cancelBlocked || !currentClient?.email) return
     setIsProcessingCancel(true)
-    await new Promise(r => setTimeout(r, 1000))
-    setLessons(prev => prev.map(l => l.id === cancelLesson.id ? { ...l, is_booked_by_me: false, booked_count: l.booked_count - 1 } : l))
+    await new Promise(r => setTimeout(r, 400))
+    try {
+      await studioApi.cancelBookingOnServer(cancelLesson.id, currentClient.email)
+      await studioApi.sendCancelBookingEmail({
+        email: currentClient.email,
+        clientName: currentClient.name || 'Гість',
+        className: cancelLesson.class_name,
+        startTime: format(cancelLesson.start_timestamp, 'd MMMM, HH:mm', { locale: uk }),
+      })
+      await reloadAppData()
+    } catch (e) {
+      console.error(e)
+      alert('Не вдалося скасувати запис. Спробуйте пізніше.')
+    }
     setIsProcessingCancel(false)
     setCancelLesson(null)
   }
@@ -294,16 +424,17 @@ function ClientPage({ lessons, setLessons, currentClient, onClientLogout }: {
             <AnimatePresence>
               {filteredLessons.map((lesson, idx) => {
                 const isFull = lesson.booked_count >= lesson.capacity
+                const imBooked = isLessonBookedByCurrentClient(lesson, currentClient)
                 return (
                   <motion.div key={lesson.id} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.05, duration: 0.3 }}>
-                    <Card className={cn("overflow-hidden border-white/[0.07] bg-muted/40 shadow-md shadow-black/20", lesson.is_booked_by_me ? "ring-1 ring-brand-gold/40 border-brand-gold/35" : "")}>
-                      <div className={cn("h-1 w-full", lesson.is_booked_by_me ? "bg-gradient-to-r from-brand-navy to-brand-navy-dark" : "bg-gradient-to-r from-brand-gold to-brand-gold-light")} />
+                    <Card className={cn("overflow-hidden border-white/[0.07] bg-muted/40 shadow-md shadow-black/20", imBooked ? "ring-1 ring-brand-gold/40 border-brand-gold/35" : "")}>
+                      <div className={cn("h-1 w-full", imBooked ? "bg-gradient-to-r from-brand-navy to-brand-navy-dark" : "bg-gradient-to-r from-brand-gold to-brand-gold-light")} />
                       <div className="p-5 flex flex-col sm:flex-row gap-5 items-start sm:items-center justify-between">
                         <div className="space-y-2.5 flex-1 min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <h3 className="text-base font-bold text-foreground">{lesson.class_name}</h3>
-                            {lesson.is_booked_by_me && <Badge className="bg-brand-gold text-brand-charcoal border-0 text-[10px] px-2">Ви записані</Badge>}
-                            {isFull && !lesson.is_booked_by_me && <Badge variant="destructive" className="text-[10px] px-2">Місць немає</Badge>}
+                            {imBooked && <Badge className="bg-brand-gold text-brand-charcoal border-0 text-[10px] px-2">Ви записані</Badge>}
+                            {isFull && !imBooked && <Badge variant="destructive" className="text-[10px] px-2">Місць немає</Badge>}
                           </div>
                           <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
                             <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" />{format(lesson.start_timestamp, 'HH:mm')} – {format(lesson.end_timestamp, 'HH:mm')}</span>
@@ -312,7 +443,7 @@ function ClientPage({ lessons, setLessons, currentClient, onClientLogout }: {
                           </div>
                         </div>
                         <div className="w-full sm:w-auto shrink-0 flex gap-2">
-                          {!lesson.is_booked_by_me ? (
+                          {!imBooked ? (
                             <Button size="sm" disabled={isFull} onClick={() => navigate(`/book/${lesson.id}`)} className="w-full sm:w-28">
                               Записатись
                             </Button>
@@ -362,13 +493,12 @@ function ClientPage({ lessons, setLessons, currentClient, onClientLogout }: {
 }
 
 // ── Page: Booking Form (with Subscription Choice) ───────────────────────────
-function BookingPage({ lessons, setLessons, currentClient, setClients, plans, onClientLogout }: {
+function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppData }: {
   lessons: ActualLesson[],
-  setLessons: React.Dispatch<React.SetStateAction<ActualLesson[]>>,
   currentClient: Client | null,
-  setClients: React.Dispatch<React.SetStateAction<Client[]>>,
   plans: SubscriptionPlan[],
-  onClientLogout: () => void
+  onClientLogout: () => void,
+  reloadAppData: () => Promise<void>,
 }) {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -379,6 +509,10 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
   const [phone, setPhone] = useState(currentClient?.phone || '')
   const [email, setEmail] = useState(currentClient?.email || '')
   const [isProcessing, setIsProcessing] = useState(false)
+  /** Success screen: only show “абонемент” line when this booking actually used it (not one-time pay while having a sub). */
+  const [successBookingUsedSubscription, setSuccessBookingUsedSubscription] = useState(false)
+  /** Which package to burn when several are active (null = default: certificate first, else first). */
+  const [selectedSubId, setSelectedSubId] = useState<string | null>(null)
 
   const activeSub = getActiveSubscription(currentClient)
 
@@ -391,58 +525,94 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
     e.preventDefault()
     setIsProcessing(true)
     try {
-      await fetch('http://localhost:3000/api/send-booking-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email, clientName: name || 'Гість', className: lesson.class_name,
-          startTime: format(lesson.start_timestamp, 'd MMMM, HH:mm', {locale: uk}),
-          trainerName: lesson.trainer_name, lessonId: lesson.id
-        })
-      });
-    } catch(e) { console.error(e) }
-    setLessons(prev => prev.map(l => l.id === lesson.id ? { ...l, is_booked_by_me: true, booked_count: l.booked_count + 1, my_booking_name: name, my_booking_email: email } : l))
+      await studioApi.postBooking({
+        lessonId: lesson.id,
+        client_email: email,
+        client_name: name || 'Гість',
+        client_user_id: currentClient?.id ?? null,
+        meta: null,
+      })
+      await studioApi.sendBookingEmail({
+        email,
+        clientName: name || 'Гість',
+        className: lesson.class_name,
+        startTime: format(lesson.start_timestamp, 'd MMMM, HH:mm', { locale: uk }),
+        trainerName: lesson.trainer_name,
+        lessonId: lesson.id,
+      })
+      await reloadAppData()
+    } catch (err) {
+      console.error(err)
+      alert(err instanceof Error ? err.message : 'Не вдалося записатись')
+      setIsProcessing(false)
+      return
+    }
     setIsProcessing(false)
+    setSuccessBookingUsedSubscription(false)
     setStep('success')
   }
 
   // ── Subscription booking ──
   const handleBookWithSub = async () => {
-    if (!currentClient || !activeSub) return
+    if (!currentClient) return
+    const actives = listActiveSubscriptions(currentClient)
+    const pickedId =
+      selectedSubId && actives.some(s => s.id === selectedSubId)
+        ? selectedSubId
+        : (actives.find(isGiftLikeSubscription)?.id ?? actives[0]?.id)
+    const sub = actives.find(s => s.id === pickedId) ?? getActiveSubscription(currentClient)
+    if (!sub || sub.used_sessions >= sub.total_sessions) return
     setIsProcessing(true)
     await new Promise(r => setTimeout(r, 800))
 
-    // Update client subscription
-    setClients(prev => prev.map(c => {
-      if (c.id !== currentClient.id) return c
-      return {
-        ...c,
-        subscriptions: c.subscriptions.map(s => s.id === activeSub.id ? { ...s, used_sessions: s.used_sessions + 1 } : s),
-        bookings: [...c.bookings, { lessonId: lesson.id, className: lesson.class_name, date: new Date().toISOString(), trainerName: lesson.trainer_name }]
-      }
-    }))
+    const subscriptionKind: 'paid' | 'gift' = isGiftLikeSubscription(sub) ? 'gift' : 'paid'
 
-    // Update lesson
-    setLessons(prev => prev.map(l => l.id === lesson.id ? { ...l, is_booked_by_me: true, booked_count: l.booked_count + 1, my_booking_name: currentClient.name, my_booking_email: currentClient.email } : l))
+    const planForSub = plans.find(p => p.id === sub.plan_id)
+    const sessionRetailPerVisit =
+      planForSub && planForSub.sessions > 0 ? planForSub.price / planForSub.sessions : undefined
+
+    const nextSubs = currentClient.subscriptions.map(s =>
+      s.id === sub.id ? { ...s, used_sessions: s.used_sessions + 1 } : s
+    )
+    const meta: Record<string, unknown> = {
+      subscription_kind: subscriptionKind,
+      subscription_id: sub.id,
+      ...(sessionRetailPerVisit != null ? { subscription_session_value: sessionRetailPerVisit } : {}),
+      ...(subscriptionKind === 'gift' && sessionRetailPerVisit != null ? { certificate_session_value: sessionRetailPerVisit } : {}),
+    }
 
     try {
-      await fetch('http://localhost:3000/api/send-booking-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: currentClient.email, clientName: currentClient.name, className: lesson.class_name,
-          startTime: format(lesson.start_timestamp, 'd MMMM, HH:mm', {locale: uk}),
-          trainerName: lesson.trainer_name, lessonId: lesson.id
-        })
-      });
-    } catch(e) { console.error(e) }
+      await studioApi.postBookingWithSubscription({
+        lessonId: lesson.id,
+        client_user_id: currentClient.id,
+        client_email: currentClient.email,
+        client_name: currentClient.name,
+        subscriptions: nextSubs,
+        meta,
+      })
+      await studioApi.sendBookingEmail({
+        email: currentClient.email,
+        clientName: currentClient.name,
+        className: lesson.class_name,
+        startTime: format(lesson.start_timestamp, 'd MMMM, HH:mm', { locale: uk }),
+        trainerName: lesson.trainer_name,
+        lessonId: lesson.id,
+      })
+      await reloadAppData()
+    } catch (err) {
+      console.error(err)
+      alert(err instanceof Error ? err.message : 'Не вдалося записатись')
+      setIsProcessing(false)
+      return
+    }
 
     setIsProcessing(false)
+    setSuccessBookingUsedSubscription(true)
     setStep('success')
   }
 
   // ── Buy subscription plan ──
-  const handleBuyPlan = (plan: SubscriptionPlan) => {
+  const handleBuyPlan = async (plan: SubscriptionPlan) => {
     if (!currentClient) return
     const now = new Date()
     const newSub: ClientSubscription = {
@@ -452,13 +622,18 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
       total_sessions: plan.sessions,
       used_sessions: 0,
       purchased_at: now.toISOString(),
-      expires_at: addDays(now, plan.duration_days).toISOString()
+      expires_at: addDays(now, plan.duration_days).toISOString(),
+      source: 'purchase',
     }
-    setClients(prev => prev.map(c => {
-      if (c.id !== currentClient.id) return c
-      return { ...c, subscriptions: [...c.subscriptions, newSub] }
-    }))
-    // Go to sub confirm step now that client has an active subscription
+    const next = [...currentClient.subscriptions, newSub]
+    try {
+      await studioApi.putClientSubscriptions(currentClient.id, next)
+      await reloadAppData()
+    } catch (e) {
+      console.error(e)
+      alert('Не вдалося зберегти абонемент на сервері.')
+      return
+    }
     setStep('sub_confirm')
   }
 
@@ -475,9 +650,18 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
               <div>
                 <h2 className="text-2xl font-bold text-foreground mb-2">Успішно заброньовано!</h2>
                 <p className="text-muted-foreground">Час заняття: {format(lesson.start_timestamp, 'HH:mm')}</p>
-                {activeSub && (
+                {successBookingUsedSubscription && (
                   <p className="text-sm text-foreground mt-2 font-medium">
-                    Списано 1 візит з абонементу (залишилось {activeSub.total_sessions - activeSub.used_sessions - 1})
+                    {activeSub
+                      ? `Списано 1 візит з абонементу (залишилось ${Math.max(0, activeSub.total_sessions - activeSub.used_sessions)})`
+                      : 'Списано 1 візит з абонементу (у цьому пакеті більше не залишилось візитів).'}
+                  </p>
+                )}
+                {!successBookingUsedSubscription && (
+                  <p className="text-sm text-muted-foreground mt-2">
+                    {currentClient && activeSub
+                      ? `Оплачено разовий візит (${SINGLE_VISIT_PRICE}₴).`
+                      : `Оплачено разовий візит (${SINGLE_VISIT_PRICE}₴).`}
                   </p>
                 )}
               </div>
@@ -504,7 +688,7 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
           {/* Lesson Info */}
           <div className="p-4 rounded-xl bg-muted/50 border border-white/[0.07] shadow-md shadow-black/20 space-y-2 mb-6">
             <div className="flex items-start gap-3">
-              <img src={logoImg} alt="" className="w-10 h-10 rounded-full mt-0.5" />
+              <img src={logoSrc} alt="" className="w-10 h-10 rounded-full mt-0.5" />
               <div>
                 <p className="font-bold text-foreground text-lg">{lesson.class_name}</p>
                 <div className="flex flex-wrap gap-4 text-sm text-muted-foreground mt-1">
@@ -634,7 +818,7 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
           {step === 'sub_confirm' && currentClient && (
             <Card className="shadow-lg border-brand-gold/20">
               <CardHeader className="pb-4 border-b border-border/70 bg-brand-gold/5 rounded-t-xl">
-                <Button variant="ghost" className="w-fit p-0 h-auto mb-2 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => setStep('choose')}>← Назад до вибору</Button>
+                <Button variant="ghost" className="w-fit p-0 h-auto mb-2 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => { setSelectedSubId(null); setStep('choose') }}>← Назад до вибору</Button>
                 <CardTitle className="text-xl font-bold flex items-center gap-2">
                   <Crown className="w-5 h-5 text-brand-gold" />
                   Запис за абонементом
@@ -642,21 +826,40 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
               </CardHeader>
               <CardContent className="pt-6 space-y-6">
                 {(() => {
-                  const sub = getActiveSubscription(currentClient)
-                  if (!sub) return <p>Не знайдено активний абонемент</p>
-                  const remaining = sub.total_sessions - sub.used_sessions
+                  const actives = listActiveSubscriptions(currentClient)
+                  if (!actives.length) return <p className="text-muted-foreground">Не знайдено активний абонемент</p>
+                  const defaultId = actives.find(isGiftLikeSubscription)?.id ?? actives[0].id
+                  const effectiveId = (selectedSubId && actives.some(s => s.id === selectedSubId) ? selectedSubId : defaultId)
                   return (
                     <>
-                      <div className="bg-gradient-to-br from-brand-navy to-brand-navy-dark text-white rounded-xl p-5 space-y-3">
-                        <p className="text-sm font-semibold text-brand-gold">{sub.plan_name}</p>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-white/70">Залишилось візитів</span>
-                          <span className="font-bold text-lg">{remaining}</span>
-                        </div>
-                        <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden">
-                          <div className="h-full bg-gradient-to-r from-brand-gold to-brand-gold-light rounded-full" style={{ width: `${(sub.used_sessions / sub.total_sessions) * 100}%` }}/>
-                        </div>
-                        <p className="text-xs text-white/50">Дійсний до {format(new Date(sub.expires_at), 'dd.MM.yyyy')}</p>
+                      {actives.length > 1 && (
+                        <p className="text-sm text-muted-foreground">
+                          У вас кілька активних пакетів. Оберіть, з якого спишеться візит (сертифікат за замовчуванням).
+                        </p>
+                      )}
+                      <div className="space-y-2">
+                        {actives.map(s => {
+                          const gift = isGiftLikeSubscription(s)
+                          const remaining = s.total_sessions - s.used_sessions
+                          const sel = s.id === effectiveId
+                          return (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => setSelectedSubId(s.id)}
+                              className={cn(
+                                'w-full text-left rounded-xl border p-4 transition-colors',
+                                sel ? 'border-brand-gold bg-brand-gold/15 ring-1 ring-brand-gold/30' : 'border-border bg-card/60 hover:border-brand-gold/35'
+                              )}
+                            >
+                              <p className="text-sm font-semibold text-foreground">{s.plan_name}</p>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {gift ? 'Сертифікат / подарунок' : 'Куплений абонемент'} · залишилось {remaining} з {s.total_sessions}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground/80 mt-1">до {format(new Date(s.expires_at), 'dd.MM.yyyy')}</p>
+                            </button>
+                          )
+                        })}
                       </div>
                       <div className="bg-muted/70 rounded-xl p-4 space-y-2">
                         <p className="text-sm text-muted-foreground"><b>Клієнт:</b> {currentClient.name}</p>
@@ -717,20 +920,68 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
 }
 
 // ── Page: Cancel Booking from Email ─────────────────────────────────────────
-function CancelBookingPage({ lessons, setLessons }: { lessons: ActualLesson[], setLessons: React.Dispatch<React.SetStateAction<ActualLesson[]>> }) {
+function CancelBookingPage({ reloadAppData }: { reloadAppData: () => Promise<void> }) {
   const { id } = useParams()
   const navigate = useNavigate()
-  const lesson = lessons.find(l => l.id === id && l.is_booked_by_me)
+  const [searchParams] = useSearchParams()
+  const emailFromLink = searchParams.get('email') || ''
+  const [lesson, setLesson] = useState<ActualLesson | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [loadingLesson, setLoadingLesson] = useState(true)
   const [isProcessing, setIsProcessing] = useState(false)
   const [isCancelled, setIsCancelled] = useState(false)
 
-  if (!lesson && !isCancelled) {
+  useEffect(() => {
+    if (!id) {
+      setLoadingLesson(false)
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { lesson: raw } = await studioApi.fetchLessonForCancel(id, emailFromLink)
+        if (cancelled) return
+        const L: ActualLesson = {
+          id: raw.id,
+          class_name: raw.class_name,
+          trainer_name: raw.trainer_name,
+          start_timestamp: new Date(raw.start_timestamp),
+          end_timestamp: new Date(raw.end_timestamp),
+          capacity: raw.capacity,
+          booked_count: raw.booked_count,
+          status: raw.status as LessonStatus,
+          is_booked_by_me: raw.is_booked_by_me,
+          my_booking_email: raw.my_booking_email,
+          my_booking_name: raw.my_booking_name,
+        }
+        setLesson(L)
+        setLoadError(null)
+      } catch (e) {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : 'Помилка завантаження')
+      } finally {
+        if (!cancelled) setLoadingLesson(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [id, emailFromLink])
+
+  if (loadingLesson && !isCancelled) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4 text-center text-muted-foreground">
+        Завантаження…
+      </div>
+    )
+  }
+
+  if ((!lesson || !lesson.is_booked_by_me) && !isCancelled) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4 text-center">
         <div>
           <AlertTriangle className="w-12 h-12 text-muted-foreground/90 mx-auto mb-4" />
           <h2 className="text-xl font-bold text-foreground mb-2">Бронювання не знайдено</h2>
-          <p className="text-muted-foreground mb-6">Можливо, воно вже було скасовано або посилання застаріло.</p>
+          <p className="text-muted-foreground mb-2">
+            {loadError || 'Можливо, воно вже було скасовано або посилання застаріло. Відкрийте посилання з листа (з email).'}
+          </p>
           <Button onClick={() => navigate('/')}>На головну</Button>
         </div>
       </div>
@@ -738,19 +989,21 @@ function CancelBookingPage({ lessons, setLessons }: { lessons: ActualLesson[], s
   }
 
   const handleCancelClick = async () => {
-    if (!lesson) return
+    if (!lesson?.my_booking_email) return
     setIsProcessing(true)
     try {
-      await fetch('http://localhost:3000/api/cancel-booking', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: lesson.my_booking_email, clientName: lesson.my_booking_name || 'Гість',
-          className: lesson.class_name, startTime: format(lesson.start_timestamp, 'd MMMM, HH:mm', {locale: uk})
-        })
-      });
-    } catch(e) { console.error(e) }
-    setLessons(prev => prev.map(l => l.id === lesson.id ? { ...l, is_booked_by_me: false, booked_count: l.booked_count - 1 } : l))
+      await studioApi.cancelBookingOnServer(lesson.id, lesson.my_booking_email)
+      await studioApi.sendCancelBookingEmail({
+        email: lesson.my_booking_email,
+        clientName: lesson.my_booking_name || 'Гість',
+        className: lesson.class_name,
+        startTime: format(lesson.start_timestamp, 'd MMMM, HH:mm', { locale: uk }),
+      })
+      await reloadAppData()
+    } catch (e) {
+      console.error(e)
+      alert('Не вдалося скасувати. Спробуйте пізніше.')
+    }
     setIsProcessing(false)
     setIsCancelled(true)
   }
@@ -797,10 +1050,9 @@ function CancelBookingPage({ lessons, setLessons }: { lessons: ActualLesson[], s
 }
 
 // ── Page: Auth (Login / Register Tabs) ──────────────────────────────────────
-function AuthPage({ clients, setClients, setCurrentClientId }: {
-  clients: Client[],
-  setClients: React.Dispatch<React.SetStateAction<Client[]>>,
-  setCurrentClientId: (id: string | null) => void
+function AuthPage({ setCurrentClientId, reloadAppData }: {
+  setCurrentClientId: (id: string | null) => void,
+  reloadAppData: () => Promise<void>,
 }) {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -826,16 +1078,17 @@ function AuthPage({ clients, setClients, setCurrentClientId }: {
       setError('Невірний email або пароль')
       return
     }
-    // Sync client profile with localStorage
-    let client = clients.find(c => c.id === data.user.id)
-    if (!client) {
-      const { data: profile } = await supabase.from('User').select('*').eq('id', data.user.id).single()
-      if (profile) {
-        client = { id: profile.id, name: profile.name, email: profile.email, phone: profile.phone, password: '', subscriptions: [], bookings: [] }
-        setClients(prev => [...prev, client!])
-      }
+    const { data: profile } = await supabase.from('User').select('*').eq('id', data.user.id).single()
+    if (profile) {
+      await studioApi.upsertStudioClient({
+        id: profile.id,
+        email: profile.email,
+        name: profile.name,
+        phone: profile.phone || '',
+      })
     }
-    if (client) setCurrentClientId(client.id)
+    await reloadAppData()
+    setCurrentClientId(data.user.id)
     navigate(redirectTo)
   }
 
@@ -854,9 +1107,8 @@ function AuthPage({ clients, setClients, setCurrentClientId }: {
     const userId = data.user!.id
     // 2. Insert profile into User table
     await supabase.from('User').insert({ id: userId, email, name, phone, role: 'CLIENT' })
-    // 3. Add to local clients state
-    const newClient: Client = { id: userId, name, email, phone, password: '', subscriptions: [], bookings: [] }
-    setClients(prev => [...prev, newClient])
+    await studioApi.upsertStudioClient({ id: userId, email, name, phone: phone || '' })
+    await reloadAppData()
     setCurrentClientId(userId)
     setLoading(false)
     navigate(redirectTo)
@@ -866,7 +1118,7 @@ function AuthPage({ clients, setClients, setCurrentClientId }: {
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md">
         <div className="text-center mb-8">
-          <img src={logoImg} alt="Brave! Yoga" className="w-20 h-20 rounded-full mx-auto shadow-lg mb-4 ring-4 ring-brand-gold/25" />
+          <img src={logoSrc} alt="Brave! Yoga" className="w-20 h-20 rounded-full mx-auto shadow-lg mb-4 ring-4 ring-brand-gold/25" />
           <h1 className="flex flex-col items-center gap-1">
             <span className="font-brand-script text-4xl text-brand-gold">Brave!</span>
             <span className="font-brand-sans text-[0.7rem] text-foreground/80 tracking-[0.28em]">Yoga</span>
@@ -959,13 +1211,12 @@ function AuthPage({ clients, setClients, setCurrentClientId }: {
 }
 
 // ── Page: Client Dashboard ──────────────────────────────────────────────────
-function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans, promoCodes, setPromoCodes }: {
+function ClientDashboardPage({ currentClient, onClientLogout, plans, promoCodes, reloadAppData }: {
   currentClient: Client | null,
-  setClients: React.Dispatch<React.SetStateAction<Client[]>>,
   onClientLogout: () => void,
   plans: SubscriptionPlan[],
   promoCodes: PromoCode[],
-  setPromoCodes: React.Dispatch<React.SetStateAction<PromoCode[]>>
+  reloadAppData: () => Promise<void>,
 }) {
   const navigate = useNavigate()
   const [showBuyPlans, setShowBuyPlans] = useState(false)
@@ -977,7 +1228,7 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans,
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <div className="text-center">
-          <img src={logoImg} alt="" className="w-16 h-16 rounded-full mx-auto mb-4" />
+          <img src={logoSrc} alt="" className="w-16 h-16 rounded-full mx-auto mb-4" />
           <h2 className="text-xl font-bold mb-2">Увійдіть до свого акаунту</h2>
           <p className="text-muted-foreground mb-6">Щоб бачити свій абонемент та дані</p>
           <Button onClick={() => navigate('/auth?redirect=/dashboard')} variant="brand">Увійти</Button>
@@ -989,7 +1240,7 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans,
   const activeSub = getActiveSubscription(currentClient)
   const allSubs = [...currentClient.subscriptions].reverse()
 
-  const handleBuyPlan = (plan: SubscriptionPlan) => {
+  const handleBuyPlan = async (plan: SubscriptionPlan) => {
     const now = new Date()
     const newSub: ClientSubscription = {
       id: Math.random().toString(36).substr(2, 9),
@@ -998,16 +1249,21 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans,
       total_sessions: plan.sessions,
       used_sessions: 0,
       purchased_at: now.toISOString(),
-      expires_at: addDays(now, plan.duration_days).toISOString()
+      expires_at: addDays(now, plan.duration_days).toISOString(),
+      source: 'purchase',
     }
-    setClients(prev => prev.map(c => {
-      if (c.id !== currentClient.id) return c
-      return { ...c, subscriptions: [...c.subscriptions, newSub] }
-    }))
+    try {
+      await studioApi.putClientSubscriptions(currentClient.id, [...currentClient.subscriptions, newSub])
+      await reloadAppData()
+    } catch (e) {
+      console.error(e)
+      alert('Не вдалося зберегти покупку.')
+      return
+    }
     setShowBuyPlans(false)
   }
 
-  const handleActivatePromo = () => {
+  const handleActivatePromo = async () => {
     setPromoError(null)
     setPromoSuccess(null)
     const code = promoInput.trim().toUpperCase()
@@ -1015,24 +1271,18 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans,
     const promo = promoCodes.find(p => p.code === code)
     if (!promo) { setPromoError('Невірний код. Перевірте правильність.'); return }
     if (promo.used) { setPromoError('Цей код вже використаний.'); return }
-    // Activate: create subscription from promo
-    const now = new Date()
-    const newSub: ClientSubscription = {
-      id: Math.random().toString(36).substr(2, 9),
-      plan_id: promo.plan_id,
-      plan_name: promo.plan_name + ' (Подарунок)',
-      total_sessions: promo.sessions,
-      used_sessions: 0,
-      purchased_at: now.toISOString(),
-      expires_at: addDays(now, promo.duration_days).toISOString()
+    try {
+      await studioApi.redeemPromoOnServer({
+        code,
+        clientId: currentClient.id,
+        clientEmail: currentClient.email,
+      })
+      await reloadAppData()
+      setPromoInput('')
+      setPromoSuccess(`Абонемент "${promo.plan_name}" успішно активовано!`)
+    } catch (e) {
+      setPromoError(e instanceof Error ? e.message : 'Помилка активації')
     }
-    setClients(prev => prev.map(c => {
-      if (c.id !== currentClient.id) return c
-      return { ...c, subscriptions: [...c.subscriptions, newSub] }
-    }))
-    setPromoCodes(prev => prev.map(p => p.code === code ? { ...p, used: true, used_by: currentClient.email } : p))
-    setPromoInput('')
-    setPromoSuccess(`Абонемент "${promo.plan_name}" успішно активовано!`)
   }
 
   return (
@@ -1265,22 +1515,56 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans,
 }
 
 // ── Admin Layout & Login ────────────────────────────────────────────────────
-function AdminLayout({ isAdminLogged, setIsAdminLogged }: { isAdminLogged: boolean, setIsAdminLogged: (b: boolean) => void }) {
+function AdminLayout({ isAdminLogged, setIsAdminLogged, onAdminLogout, onAdminLoggedIn }: {
+  isAdminLogged: boolean
+  setIsAdminLogged: (b: boolean) => void
+  onAdminLogout: () => void | Promise<void>
+  onAdminLoggedIn: () => void | Promise<void>
+}) {
   const navigate = useNavigate()
   const [password, setPassword] = useState('')
+  const [adminLoginBusy, setAdminLoginBusy] = useState(false)
 
   if (!isAdminLogged) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
         <Card className="w-full max-w-sm">
           <CardHeader>
-            <img src={logoImg} alt="Brave! Yoga" className="w-16 h-16 rounded-full mx-auto mb-2 shadow-lg" />
+            <img src={logoSrc} alt="Brave! Yoga" className="w-16 h-16 rounded-full mx-auto mb-2 shadow-lg" />
             <CardTitle className="text-center">Вхід для Адміністратора</CardTitle>
           </CardHeader>
           <CardContent>
-            <form onSubmit={e => { e.preventDefault(); if(password==='admin123') setIsAdminLogged(true); else alert('Невірний пароль!') }}>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault()
+                setAdminLoginBusy(true)
+                try {
+                  const r = await fetch('/api/admin/session', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password }),
+                  })
+                  if (r.ok) {
+                    setPassword('')
+                    setIsAdminLogged(true)
+                    await onAdminLoggedIn()
+                  } else {
+                    const data = (await r.json().catch(() => null)) as { error?: string } | null
+                    if (r.status === 401) alert('Невірний пароль!')
+                    else alert(data?.error || `Помилка входу (${r.status}).`)
+                  }
+                } catch {
+                  alert('Помилка з’єднання. Спробуйте ще раз.')
+                } finally {
+                  setAdminLoginBusy(false)
+                }
+              }}
+            >
               <input type="password" required placeholder="Пароль" value={password} onChange={e=>setPassword(e.target.value)} className={inputClasses} />
-              <Button type="submit" variant="brand" className="w-full mt-4">Увійти</Button>
+              <Button type="submit" variant="brand" className="w-full mt-4" disabled={adminLoginBusy}>
+                {adminLoginBusy ? 'Вхід…' : 'Увійти'}
+              </Button>
               <Button type="button" variant="link" onClick={()=>navigate('/')} className="w-full mt-2 text-muted-foreground/90">На головну</Button>
             </form>
           </CardContent>
@@ -1291,7 +1575,7 @@ function AdminLayout({ isAdminLogged, setIsAdminLogged }: { isAdminLogged: boole
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <Header role="ADMIN" onLogout={() => setIsAdminLogged(false)} />
+      <Header role="ADMIN" onLogout={() => void onAdminLogout()} />
       <main className="flex-1">
         <Outlet />
       </main>
@@ -1305,7 +1589,7 @@ function AdminHub() {
 
   return (
     <div className="container p-4 sm:p-12 flex flex-col items-center justify-center mt-10">
-      <img src={logoImg} alt="" className="w-16 h-16 rounded-full shadow-lg mb-4 ring-2 ring-brand-gold/30" />
+      <img src={logoSrc} alt="" className="w-16 h-16 rounded-full shadow-lg mb-4 ring-2 ring-brand-gold/30" />
       <h1 className="text-3xl font-bold mb-2 text-foreground tracking-tight">Меню Адміністратора</h1>
       <p className="text-sm text-muted-foreground mb-8">Brave! Yoga — внутрішня панель</p>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl">
@@ -1350,11 +1634,12 @@ function AdminHub() {
 }
 
 // ── Page: Admin Settings (Manage Trainers, Classes & Subscription Plans) ────
-function AdminSettingsPage({ trainers, setTrainers, classTypes, setClassTypes, plans, setPlans, promoCodes, setPromoCodes }: {
-  trainers: string[], setTrainers: React.Dispatch<React.SetStateAction<string[]>>,
-  classTypes: string[], setClassTypes: React.Dispatch<React.SetStateAction<string[]>>,
-  plans: SubscriptionPlan[], setPlans: React.Dispatch<React.SetStateAction<SubscriptionPlan[]>>,
-  promoCodes: PromoCode[], setPromoCodes: React.Dispatch<React.SetStateAction<PromoCode[]>>
+function AdminSettingsPage({ trainers, classTypes, plans, promoCodes, reloadAppData }: {
+  trainers: string[],
+  classTypes: string[],
+  plans: SubscriptionPlan[],
+  promoCodes: PromoCode[],
+  reloadAppData: () => Promise<void>,
 }) {
   const [newTrainer, setNewTrainer] = useState('')
   const [newClass, setNewClass] = useState('')
@@ -1370,7 +1655,7 @@ function AdminSettingsPage({ trainers, setTrainers, classTypes, setClassTypes, p
   const [promoSelectedPlanId, setPromoSelectedPlanId] = useState('')
   const [copiedCode, setCopiedCode] = useState<string|null>(null)
 
-  const generateCode = () => {
+  const generateCode = async () => {
     if (!promoSelectedPlanId) return
     const plan = plans.find(p => p.id === promoSelectedPlanId)
     if (!plan) return
@@ -1385,7 +1670,13 @@ function AdminSettingsPage({ trainers, setTrainers, classTypes, setClassTypes, p
       created_at: new Date().toISOString(),
       used: false
     }
-    setPromoCodes(prev => [promo, ...prev])
+    try {
+      await studioApi.putStudioConfig({ promoCodes: [promo, ...promoCodes] })
+      await reloadAppData()
+    } catch (e) {
+      console.error(e)
+      alert('Не вдалося зберегти код')
+    }
   }
 
   const copyCode = (code: string) => {
@@ -1394,21 +1685,33 @@ function AdminSettingsPage({ trainers, setTrainers, classTypes, setClassTypes, p
     setTimeout(() => setCopiedCode(null), 2000)
   }
 
-  const handleAddTrainer = (e: React.FormEvent) => {
+  const handleAddTrainer = async (e: React.FormEvent) => {
     e.preventDefault()
     if(!newTrainer.trim()) return
-    setTrainers(p => [...p, newTrainer.trim()])
-    setNewTrainer('')
+    try {
+      await studioApi.putStudioConfig({ trainers: [...trainers, newTrainer.trim()] })
+      await reloadAppData()
+      setNewTrainer('')
+    } catch (err) {
+      console.error(err)
+      alert('Не вдалося зберегти')
+    }
   }
 
-  const handleAddClass = (e: React.FormEvent) => {
+  const handleAddClass = async (e: React.FormEvent) => {
     e.preventDefault()
     if(!newClass.trim()) return
-    setClassTypes(p => [...p, newClass.trim()])
-    setNewClass('')
+    try {
+      await studioApi.putStudioConfig({ classTypes: [...classTypes, newClass.trim()] })
+      await reloadAppData()
+      setNewClass('')
+    } catch (err) {
+      console.error(err)
+      alert('Не вдалося зберегти')
+    }
   }
 
-  const handleAddPlan = (e: React.FormEvent) => {
+  const handleAddPlan = async (e: React.FormEvent) => {
     e.preventDefault()
     if(!newPlanName.trim() || !newPlanSessions || !newPlanPrice) return
     const plan: SubscriptionPlan = {
@@ -1418,11 +1721,17 @@ function AdminSettingsPage({ trainers, setTrainers, classTypes, setClassTypes, p
       price: parseInt(newPlanPrice),
       duration_days: parseInt(newPlanDays) || 30
     }
-    setPlans(p => [...p, plan])
-    setNewPlanName('')
-    setNewPlanSessions('')
-    setNewPlanPrice('')
-    setNewPlanDays('30')
+    try {
+      await studioApi.putStudioConfig({ plans: [...plans, plan] })
+      await reloadAppData()
+      setNewPlanName('')
+      setNewPlanSessions('')
+      setNewPlanPrice('')
+      setNewPlanDays('30')
+    } catch (err) {
+      console.error(err)
+      alert('Не вдалося зберегти')
+    }
   }
 
   return (
@@ -1446,7 +1755,7 @@ function AdminSettingsPage({ trainers, setTrainers, classTypes, setClassTypes, p
               {trainers.map((t, idx) => (
                 <div key={idx} className="flex items-center justify-between p-3 border border-border rounded-lg hover:bg-muted/70">
                   <span className="font-semibold text-foreground/90">{t}</span>
-                  <button onClick={() => { if(confirm('Видалити?')) setTrainers(p => p.filter(x => x !== t)) }} className="text-red-500 hover:text-white hover:bg-red-500 px-2 py-1 rounded text-xs transition-colors">Видалити</button>
+                  <button type="button" onClick={() => { if(confirm('Видалити?')) void (async () => { try { await studioApi.putStudioConfig({ trainers: trainers.filter(x => x !== t) }); await reloadAppData() } catch (e) { console.error(e); alert('Помилка') } })() }} className="text-red-500 hover:text-white hover:bg-red-500 px-2 py-1 rounded text-xs transition-colors">Видалити</button>
                 </div>
               ))}
               {trainers.length === 0 && <p className="text-sm text-muted-foreground/90 italic">Додайте тренерів.</p>}
@@ -1469,7 +1778,7 @@ function AdminSettingsPage({ trainers, setTrainers, classTypes, setClassTypes, p
               {classTypes.map((c, idx) => (
                 <div key={idx} className="flex items-center justify-between p-3 border border-border rounded-lg hover:bg-muted/70">
                   <span className="font-semibold text-foreground/90">{c}</span>
-                  <button onClick={() => { if(confirm('Видалити?')) setClassTypes(p => p.filter(x => x !== c)) }} className="text-red-500 hover:text-white hover:bg-red-500 px-2 py-1 rounded text-xs transition-colors">Видалити</button>
+                  <button type="button" onClick={() => { if(confirm('Видалити?')) void (async () => { try { await studioApi.putStudioConfig({ classTypes: classTypes.filter(x => x !== c) }); await reloadAppData() } catch (e) { console.error(e); alert('Помилка') } })() }} className="text-red-500 hover:text-white hover:bg-red-500 px-2 py-1 rounded text-xs transition-colors">Видалити</button>
                 </div>
               ))}
               {classTypes.length === 0 && <p className="text-sm text-muted-foreground/90 italic">Жодного заняття не збережено.</p>}
@@ -1507,7 +1816,7 @@ function AdminSettingsPage({ trainers, setTrainers, classTypes, setClassTypes, p
                 <div key={plan.id} className="p-3 border border-border rounded-lg hover:bg-muted/70 space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="font-semibold text-foreground/90 text-sm">{plan.name}</span>
-                    <button onClick={() => { if(confirm('Видалити план?')) setPlans(p => p.filter(x => x.id !== plan.id)) }} className="text-red-500 hover:text-white hover:bg-red-500 px-2 py-1 rounded text-xs transition-colors">Видалити</button>
+                    <button type="button" onClick={() => { if(confirm('Видалити план?')) void (async () => { try { await studioApi.putStudioConfig({ plans: plans.filter(x => x.id !== plan.id) }); await reloadAppData() } catch (e) { console.error(e); alert('Помилка') } })() }} className="text-red-500 hover:text-white hover:bg-red-500 px-2 py-1 rounded text-xs transition-colors">Видалити</button>
                   </div>
                   <p className="text-xs text-muted-foreground/90">{plan.sessions} занять • {plan.price}₴ • {plan.duration_days} днів</p>
                 </div>
@@ -1570,7 +1879,8 @@ function AdminSettingsPage({ trainers, setTrainers, classTypes, setClassTypes, p
                         </button>
                       )}
                       <button
-                        onClick={() => { if(confirm('Видалити код?')) setPromoCodes(prev => prev.filter(x => x.code !== pc.code)) }}
+                        type="button"
+                        onClick={() => { if(confirm('Видалити код?')) void (async () => { try { await studioApi.putStudioConfig({ promoCodes: promoCodes.filter(x => x.code !== pc.code) }); await reloadAppData() } catch (e) { console.error(e); alert('Помилка') } })() }}
                         className="text-red-500 hover:text-white hover:bg-red-500 px-2 py-1 rounded text-xs transition-colors"
                       >Видалити</button>
                     </div>
@@ -1615,43 +1925,43 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
   const ROW_B = '#263652'
   const TEXT_MAIN = '#e8eef8'
   const TEXT_MUTED = '#9eb0d0'
-  const BORDER = 'rgba(255,255,255,0.1)'
   const HEADER_GRAD = `linear-gradient(135deg, ${NAVY_HEADER} 0%, ${NAVY_DEEP} 100%)`
 
+  /* Plain block text — dom-to-image mishandles -webkit-line-clamp (invisible / boxed text) */
   const cellLessonTitle: React.CSSProperties = {
-    fontSize: '13px',
+    fontSize: '16px',
     fontWeight: 800,
-    color: TEXT_MAIN,
+    color: '#ffffff',
     lineHeight: 1.35,
-    marginBottom: '6px',
-    letterSpacing: '-0.01em',
+    marginBottom: '8px',
+    letterSpacing: '0.01em',
     maxWidth: '100%',
     width: '100%',
-    overflow: 'hidden',
-    display: '-webkit-box',
-    WebkitBoxOrient: 'vertical' as const,
-    WebkitLineClamp: 2,
-    wordBreak: 'break-word' as const,
-    overflowWrap: 'break-word' as const,
-    boxSizing: 'border-box' as const,
+    boxSizing: 'border-box',
+    wordBreak: 'break-word',
+    overflowWrap: 'break-word',
+    textAlign: 'center',
+    display: 'block',
+    textShadow: '0 1px 3px rgba(0,0,0,0.45)',
+    WebkitFontSmoothing: 'antialiased',
   }
 
   const cellTrainerPill: React.CSSProperties = {
-    fontSize: '11px',
+    fontSize: '12px',
     fontWeight: 600,
     color: GOLD_SOFT,
-    lineHeight: 1.5,
-    backgroundColor: 'rgba(226, 188, 90, 0.16)',
-    border: '1px solid rgba(226, 188, 90, 0.35)',
-    padding: '7px 10px',
+    lineHeight: 1.45,
+    backgroundColor: 'rgba(226, 188, 90, 0.22)',
+    padding: '8px 10px',
     borderRadius: '10px',
     maxWidth: '100%',
     width: '100%',
-    boxSizing: 'border-box' as const,
-    wordBreak: 'break-word' as const,
-    overflowWrap: 'break-word' as const,
-    textAlign: 'center' as const,
+    boxSizing: 'border-box',
+    wordBreak: 'break-word',
+    overflowWrap: 'break-word',
+    textAlign: 'center',
     display: 'block',
+    WebkitFontSmoothing: 'antialiased',
   }
 
   return (
@@ -1671,11 +1981,16 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
         }}
       >
         <style dangerouslySetInnerHTML={{ __html: `
-          #printable-schedule, #printable-schedule * { box-sizing: border-box; }
-          #printable-schedule * { outline: none; }
+          /* Kill stray “wireframe” lines from capture / UA (dom-to-image draws borders oddly) */
+          #printable-schedule, #printable-schedule * {
+            box-sizing: border-box;
+            border: none !important;
+            outline: none !important;
+            box-shadow: none !important;
+          }
         ` }} />
 
-        {/* HEADER — stacked wordmark avoids baseline/italic overlap in raster export */}
+        {/* HEADER — Brave! italic sits visually left of block “YOGA”; nudge + shared center axis */}
         <div
           style={{
             display: 'flex',
@@ -1695,11 +2010,14 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
               justifyContent: 'center',
               gap: '2px',
               marginBottom: '12px',
+              width: '100%',
             }}
           >
             <span
               style={{
                 display: 'block',
+                width: '100%',
+                textAlign: 'center',
                 fontSize: '54px',
                 lineHeight: 1,
                 fontStyle: 'italic',
@@ -1709,6 +2027,7 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
                 letterSpacing: '0.02em',
                 whiteSpace: 'nowrap',
                 paddingBottom: '4px',
+                transform: 'translateX(4px)',
               }}
             >
               Brave!
@@ -1716,11 +2035,13 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
             <span
               style={{
                 display: 'block',
+                width: '100%',
+                textAlign: 'center',
                 fontSize: '36px',
                 lineHeight: 1.15,
                 fontWeight: 800,
                 fontFamily: '"Plus Jakarta Sans", Inter, sans-serif',
-                letterSpacing: '0.28em',
+                letterSpacing: '0.24em',
                 textTransform: 'uppercase',
                 color: TEXT_MAIN,
                 whiteSpace: 'nowrap',
@@ -1736,20 +2057,19 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              background: `linear-gradient(180deg, rgba(226,188,90,0.42) 0%, rgba(226,188,90,0.28) 100%)`,
-              border: '1px solid rgba(226,188,90,0.5)',
-              padding: '12px 28px',
+              background: 'linear-gradient(180deg, #f0d78c 0%, #e8c86a 35%, #e2bc5a 100%)',
+              padding: '12px 30px',
               borderRadius: '999px',
-              minHeight: '46px',
+              minHeight: '48px',
               maxWidth: '92%',
             }}
           >
             <span
               style={{
-                fontSize: '11px',
-                fontWeight: 700,
-                letterSpacing: '0.12em',
-                color: '#121518',
+                fontSize: '12px',
+                fontWeight: 800,
+                letterSpacing: '0.08em',
+                color: '#0f1419',
                 textTransform: 'uppercase',
                 lineHeight: 1.35,
                 textAlign: 'center',
@@ -1767,18 +2087,16 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
           display: 'flex',
           flexDirection: 'column',
           borderRadius: '22px',
-          boxShadow: '0 20px 50px rgba(0,0,0,0.45), 0 0 0 1px rgba(226,188,90,0.2)',
-          border: `1px solid ${BORDER}`,
           overflow: 'hidden',
           background: TABLE_SKIN,
           minHeight: 0,
         }}>
           <div style={{ display: 'flex', flexShrink: 0, height: '62px' }}>
-            <div style={{ width: `${FIRST_COL_W}px`, flexShrink: 0, background: HEADER_GRAD, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: `1px solid ${BORDER}` }}>
+            <div style={{ width: `${FIRST_COL_W}px`, flexShrink: 0, background: HEADER_GRAD, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <span style={{ fontSize: '14px', fontWeight: 700, color: GOLD, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Час</span>
             </div>
             {DAY_SHORT.map((dayName, idx) => (
-              <div key={idx} style={{ flex: 1, minWidth: 0, background: HEADER_GRAD, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: idx < 6 ? `1px solid ${BORDER}` : 'none' }}>
+              <div key={idx} style={{ flex: 1, minWidth: 0, background: HEADER_GRAD, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <span style={{ fontSize: '16px', fontWeight: 700, color: '#ffffff', letterSpacing: '0.05em' }}>{dayName}</span>
               </div>
             ))}
@@ -1792,19 +2110,17 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
                   display: 'flex',
                   flex: 1,
                   minHeight: `${ROW_H}px`,
-                  borderBottom: rowIdx < timeSlots.length - 1 ? `1px solid ${BORDER}` : 'none',
                   background: rowIdx % 2 === 0 ? ROW_A : ROW_B,
                 }}
               >
-                <div style={{ width: `${FIRST_COL_W}px`, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: `1px solid ${BORDER}`, padding: '6px' }}>
+                <div style={{ width: `${FIRST_COL_W}px`, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px' }}>
                   <div style={{
-                    background: 'rgba(74, 106, 176, 0.35)',
-                    color: TEXT_MAIN,
+                    background: 'rgba(74, 106, 176, 0.45)',
+                    color: '#ffffff',
                     padding: '8px 12px',
                     borderRadius: '12px',
                     fontSize: '15px',
                     fontWeight: 800,
-                    border: '1px solid rgba(255,255,255,0.12)',
                     lineHeight: 1.2,
                   }}>{slot}</div>
                 </div>
@@ -1820,14 +2136,12 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
                         flexDirection: 'column',
                         alignItems: 'stretch',
                         justifyContent: 'center',
-                        borderRight: dayIdx < 6 ? `1px solid ${BORDER}` : 'none',
-                        padding: '10px 8px',
+                        padding: '12px 10px',
                         textAlign: 'center',
-                        overflow: 'hidden',
                       }}
                     >
                       {lesson ? (
-                        <div style={{ width: '100%', maxWidth: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 0, minHeight: 0 }}>
+                        <div style={{ width: '100%', maxWidth: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
                           <div style={cellLessonTitle}>{lesson.class_name}</div>
                           <div style={cellTrainerPill}>{lesson.trainer_name}</div>
                         </div>
@@ -1845,9 +2159,26 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
           </div>
         </div>
 
-        {/* FOOTER */}
-        <div style={{ marginTop: '14px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ fontSize: '13px', color: TEXT_MUTED, fontWeight: 600, letterSpacing: '0.03em' }}>Запис через посилання в профілі 🚀</div>
+        {/* FOOTER — nowrap + NBSP so emoji stays on same line in export */}
+        <div style={{ marginTop: '14px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
+          <div
+            style={{
+              fontSize: '13px',
+              color: TEXT_MUTED,
+              fontWeight: 600,
+              letterSpacing: '0.02em',
+              whiteSpace: 'nowrap',
+              display: 'flex',
+              flexDirection: 'row',
+              flexWrap: 'nowrap',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+            }}
+          >
+            <span>Запис через посилання в профілі</span>
+            <span style={{ fontSize: '15px', lineHeight: 1 }} aria-hidden>🚀</span>
+          </div>
         </div>
       </div>
     </div>
@@ -1863,6 +2194,11 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
 }) {
   const navigate = useNavigate()
   const [selectedMonth, setSelectedMonth] = useState(() => format(new Date(), 'yyyy-MM'))
+  const [monthPickerOpen, setMonthPickerOpen] = useState(false)
+  const [pickerYear, setPickerYear] = useState(() => {
+    const [y] = format(new Date(), 'yyyy-MM').split('-').map(Number)
+    return y
+  })
   const [expandedTrainer, setExpandedTrainer] = useState<string | null>(null)
 
   // Parse selected month range
@@ -1890,7 +2226,8 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
     totalLessons: number
     totalBookings: number
     singleVisitBookings: number
-    subscriptionBookings: number
+    paidSubscriptionBookings: number
+    giftCertificateBookings: number
     trainerEarnings: number
     adminEarnings: number
     totalRevenue: number
@@ -1916,24 +2253,12 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
         totalLessons: 0,
         totalBookings: 0,
         singleVisitBookings: 0,
-        subscriptionBookings: 0,
+        paidSubscriptionBookings: 0,
+        giftCertificateBookings: 0,
         trainerEarnings: 0,
         adminEarnings: 0,
         totalRevenue: 0,
         lessonDetails: []
-      })
-    })
-
-    // Count subscription bookings per trainer from client data
-    // Build a map of how many lessons each trainer had booked via subscription
-    const subBookingsByTrainer = new Map<string, number>()
-    clients.forEach(client => {
-      client.bookings.forEach(booking => {
-        const bookingDate = new Date(booking.date)
-        if (bookingDate >= monthStart && bookingDate <= monthEnd) {
-          const count = subBookingsByTrainer.get(booking.trainerName) || 0
-          subBookingsByTrainer.set(booking.trainerName, count + 1)
-        }
       })
     })
 
@@ -1945,7 +2270,8 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
           totalLessons: 0,
           totalBookings: 0,
           singleVisitBookings: 0,
-          subscriptionBookings: 0,
+          paidSubscriptionBookings: 0,
+          giftCertificateBookings: 0,
           trainerEarnings: 0,
           adminEarnings: 0,
           totalRevenue: 0,
@@ -1958,24 +2284,37 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
       const bookings = lesson.booked_count
       stats.totalBookings += bookings
 
-      // Estimate: check how many bookings for this lesson were subscription-based
-      // We use a heuristic: if the lesson is marked as booked by someone
-      // who has an active subscription, it's a subscription booking
-      // For simplicity, we count bookings from client records for that trainer in this month
-      // and the rest are single visits
-      const subBookingsForTrainer = subBookingsByTrainer.get(lesson.trainer_name) || 0
-      
-      // Distribute subscription bookings across lessons proportionally
-      const trainerMonthLessons = monthLessons.filter(l => l.trainer_name === lesson.trainer_name)
-      const subBookingsPerLesson = trainerMonthLessons.length > 0
-        ? Math.floor(subBookingsForTrainer / trainerMonthLessons.length)
-        : 0
-      
-      const subBookingsThisLesson = Math.min(subBookingsPerLesson, bookings)
-      const singleBookingsThisLesson = Math.max(0, bookings - subBookingsThisLesson)
+      let giftCertificateVisitCount = 0
+      let giftTrainerShare = 0
+      let paidSubscriptionVisitCount = 0
+      let paidSubRevenue = 0
+      let paidSubTrainerShare = 0
+      clients.forEach(client => {
+        client.bookings.forEach(b => {
+          if (b.lessonId !== lesson.id) return
+          const bookingDate = new Date(b.date)
+          if (bookingDate < monthStart || bookingDate > monthEnd) return
+          const kind = inferSubscriptionBookingKindForStats(client, b)
+          const v = subscriptionVisitRetailValue(client, b, plans)
+          if (v <= 0) return
+          if (kind === 'gift') {
+            giftCertificateVisitCount += 1
+            giftTrainerShare += v / 2
+          } else {
+            paidSubscriptionVisitCount += 1
+            paidSubRevenue += v
+            paidSubTrainerShare += v / 2
+          }
+        })
+      })
+
+      const giftSubThisLesson = giftCertificateVisitCount
+      const paidSubThisLesson = paidSubscriptionVisitCount
+      const singleBookingsThisLesson = Math.max(0, bookings - paidSubThisLesson - giftSubThisLesson)
 
       stats.singleVisitBookings += singleBookingsThisLesson
-      stats.subscriptionBookings += subBookingsThisLesson
+      stats.paidSubscriptionBookings += paidSubThisLesson
+      stats.giftCertificateBookings += giftSubThisLesson
 
       // Revenue calculation
       // Single visit: 300₴ total, 50% each
@@ -1983,26 +2322,17 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
       const singleTrainerShare = singleRevenue * 0.5
       const singleAdminShare = singleRevenue * 0.5
 
-      // Subscription: (plan_price / duration_days) / 2 per booking
-      // Find average plan price for estimation
-      let subRevenue = 0
-      let subTrainerShare = 0
-      let subAdminShare = 0
-      if (subBookingsThisLesson > 0 && plans.length > 0) {
-        // Use a weighted average of plan prices
-        const avgDailyRate = plans.reduce((sum, p) => sum + (p.price / p.duration_days), 0) / plans.length
-        const perBookingRevenue = avgDailyRate // daily rate for one session day
-        subRevenue = perBookingRevenue * subBookingsThisLesson
-        subTrainerShare = subRevenue / 2
-        subAdminShare = subRevenue / 2
-      }
+      // Paid subscription / certificate: coach share = (ціна пакету ÷ візити) ÷ 2 — same retail per visit for paid and gift
+      const paidSubAdminShare = paidSubRevenue / 2
 
-      const totalTrainerShare = singleTrainerShare + subTrainerShare
-      const totalAdminShare = singleAdminShare + subAdminShare
+      const giftAdminShare = 0
+
+      const totalTrainerShare = singleTrainerShare + paidSubTrainerShare + giftTrainerShare
+      const totalAdminShare = singleAdminShare + paidSubAdminShare + giftAdminShare
 
       stats.trainerEarnings += totalTrainerShare
       stats.adminEarnings += totalAdminShare
-      stats.totalRevenue += singleRevenue + subRevenue
+      stats.totalRevenue += singleRevenue + paidSubRevenue
 
       stats.lessonDetails.push({
         lessonId: lesson.id,
@@ -2010,7 +2340,7 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
         date: lesson.start_timestamp,
         bookedCount: bookings,
         singleRevenue,
-        subRevenue,
+        subRevenue: paidSubRevenue,
         trainerShare: totalTrainerShare,
         adminShare: totalAdminShare
       })
@@ -2026,6 +2356,18 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
   const totalBookings = useMemo(() => allStats.reduce((s, t) => s + t.totalBookings, 0), [allStats])
 
   const monthLabel = format(monthStart, 'LLLL yyyy', { locale: uk })
+  const selectedYear = monthStart.getFullYear()
+  const selectedMonthIndex = monthStart.getMonth()
+
+  const handleStatsMonthPickerOpen = (open: boolean) => {
+    setMonthPickerOpen(open)
+    if (open) setPickerYear(monthStart.getFullYear())
+  }
+
+  const pickStatsMonth = (monthIndex: number) => {
+    setSelectedMonth(format(new Date(pickerYear, monthIndex, 1), 'yyyy-MM'))
+    setMonthPickerOpen(false)
+  }
 
   return (
     <div className="container p-4 sm:p-8 max-w-6xl mx-auto">
@@ -2035,12 +2377,76 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
           <h1 className="text-2xl font-bold flex items-center gap-2 text-foreground"><BarChart3 className="w-6 h-6 text-brand-gold" /> Статистика та зарплати</h1>
           <p className="text-sm text-muted-foreground mt-1 capitalize">{monthLabel}</p>
         </div>
-        <input
-          type="month"
-          value={selectedMonth}
-          onChange={e => setSelectedMonth(e.target.value)}
-          className={cn(inputClasses, 'w-48 shadow-sm')}
-        />
+        <Popover open={monthPickerOpen} onOpenChange={handleStatsMonthPickerOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              aria-expanded={monthPickerOpen}
+              aria-haspopup="dialog"
+              className="w-full sm:w-auto min-w-[min(100%,14rem)] justify-between gap-3 border-white/12 bg-muted/30 px-3 h-10 hover:bg-brand-gold/10 hover:border-brand-gold/35 capitalize"
+            >
+              <span className="flex items-center gap-2 min-w-0">
+                <CalendarIcon className="w-4 h-4 shrink-0 text-brand-gold" />
+                <span className="text-sm font-semibold truncate">{monthLabel}</span>
+              </span>
+              <ChevronDown className="w-4 h-4 shrink-0 opacity-60" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" side="bottom" className="p-0 w-[min(calc(100vw-1.5rem),22rem)]">
+            <div className="border-b border-white/[0.06] bg-muted/40 px-3 py-2.5">
+              <p className="text-xs font-bold text-brand-gold uppercase tracking-[0.12em]">Оберіть місяць</p>
+              <p className="text-[11px] text-muted-foreground mt-1 leading-snug">
+                Рік змінюйте стрілками, місяць — кнопкою нижче
+              </p>
+            </div>
+            <div className="p-3">
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 shrink-0 rounded-md border border-white/10 hover:bg-brand-gold/15 hover:text-brand-gold hover:border-brand-gold/30"
+                  onClick={() => setPickerYear((y) => y - 1)}
+                  aria-label="Попередній рік"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+                <span className="text-base font-bold tabular-nums text-foreground tracking-tight">{pickerYear}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 shrink-0 rounded-md border border-white/10 hover:bg-brand-gold/15 hover:text-brand-gold hover:border-brand-gold/30"
+                  onClick={() => setPickerYear((y) => y + 1)}
+                  aria-label="Наступний рік"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {Array.from({ length: 12 }, (_, monthIndex) => {
+                  const shortLabel = format(new Date(pickerYear, monthIndex, 1), 'LLL', { locale: uk })
+                  const isActive = selectedYear === pickerYear && selectedMonthIndex === monthIndex
+                  return (
+                    <Button
+                      key={monthIndex}
+                      type="button"
+                      variant={isActive ? 'brand' : 'outline'}
+                      className={cn(
+                        'h-auto min-h-[2.5rem] px-1 py-2 text-[11px] sm:text-xs font-semibold capitalize leading-tight',
+                        !isActive && 'border-white/10 bg-muted/30 hover:bg-brand-gold/10 hover:border-brand-gold/35'
+                      )}
+                      onClick={() => pickStatsMonth(monthIndex)}
+                    >
+                      {shortLabel}
+                    </Button>
+                  )
+                })}
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
       </div>
 
       {/* Summary Cards */}
@@ -2120,7 +2526,7 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
             <div className="text-sm text-muted-foreground space-y-1">
               <p className="font-semibold text-foreground">Формула розрахунку зарплати:</p>
               <p>• <b>Разове заняття ({SINGLE_VISIT_PRICE}₴):</b> 50% адмін ({SINGLE_VISIT_PRICE/2}₴) + 50% тренер ({SINGLE_VISIT_PRICE/2}₴)</p>
-              <p>• <b>Абонемент:</b> (ціна абонементу ÷ к-сть днів) ÷ 2 — одна частина адміну, інша тренеру за кожне проведене заняття</p>
+              <p>• <b>Абонемент (куплений або сертифікат):</b> (ціна пакету ÷ кількість візитів) ÷ 2 — тренеру та адміну (по 50%) з кожного проведеного заняття; подарункові візити не додають виручку адміну в цій моделі</p>
             </div>
           </div>
         </CardContent>
@@ -2188,7 +2594,10 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
                             <span>{stats.totalLessons} занять</span>
                             <span>{stats.totalBookings} бронювань</span>
                             <span className="text-primary">{stats.singleVisitBookings} разових</span>
-                            <span className="text-brand-gold">{stats.subscriptionBookings} абонемент</span>
+                            <span className="text-brand-gold">{stats.paidSubscriptionBookings} абонемент</span>
+                            {stats.giftCertificateBookings > 0 && (
+                              <span className="text-amber-200/90">{stats.giftCertificateBookings} сертифікат</span>
+                            )}
                           </div>
                           {/* Earnings bar */}
                           {hasData && (
@@ -2292,9 +2701,11 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
 }
 
 // ── Page: Admin Schedule Builder ─────────────────────────────────────────────
-function AdminSchedulePage({ lessons, setLessons, trainers, classTypes }: { lessons: ActualLesson[], setLessons: React.Dispatch<React.SetStateAction<ActualLesson[]>>, trainers: string[], classTypes: string[] }) {
+function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData }: { lessons: ActualLesson[], trainers: string[], classTypes: string[], reloadAppData: () => Promise<void> }) {
   const navigate = useNavigate()
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date())
+  const [weekPickerOpen, setWeekPickerOpen] = useState(false)
+  const [pickerMonth, setPickerMonth] = useState<Date>(() => startOfMonth(new Date()))
   const [isExporting, setIsExporting] = useState(false)
 
   const [targetDateForNewLesson, setTargetDateForNewLesson] = useState<Date>(new Date())
@@ -2309,15 +2720,28 @@ function AdminSchedulePage({ lessons, setLessons, trainers, classTypes }: { less
   const weekDays = eachDayOfInterval({ start: weekStart, end: weekEnd })
   const weeklyLessons = lessons.filter(l => l.start_timestamp >= weekStart && l.start_timestamp <= weekEnd)
 
-  const handleAddLesson = (e: React.FormEvent) => {
+  const handleAddLesson = async (e: React.FormEvent) => {
     e.preventDefault()
     const [h,m] = newLessonTime.split(':').map(Number)
-    const newLesson: ActualLesson = {
-      id: Math.random().toString(), class_name: newLessonName, trainer_name: newLessonTrainer,
-      start_timestamp: makeDate(targetDateForNewLesson, h, m), end_timestamp: makeDate(targetDateForNewLesson, h+1, m),
-      capacity: 10, booked_count: 0, status: 'SCHEDULED'
+    const start = makeDate(targetDateForNewLesson, h, m)
+    const end = makeDate(targetDateForNewLesson, h + 1, m)
+    const id = Math.random().toString(36).slice(2, 12)
+    try {
+      await studioApi.createLessonOnServer({
+        id,
+        class_name: newLessonName,
+        trainer_name: newLessonTrainer,
+        start_timestamp: start.toISOString(),
+        end_timestamp: end.toISOString(),
+        capacity: 10,
+        status: 'SCHEDULED',
+      })
+      await reloadAppData()
+    } catch (err) {
+      console.error(err)
+      alert(err instanceof Error ? err.message : 'Не вдалося зберегти заняття')
+      return
     }
-    setLessons(p => [...p, newLesson].sort((a,b)=>a.start_timestamp.getTime()-b.start_timestamp.getTime()))
     setIsAddLessonOpen(false)
   }
 
@@ -2347,21 +2771,115 @@ function AdminSchedulePage({ lessons, setLessons, trainers, classTypes }: { less
     setIsExporting(false)
   }
 
+  const handleWeekPickerOpenChange = (open: boolean) => {
+    setWeekPickerOpen(open)
+    if (open) setPickerMonth(startOfMonth(weekStart))
+  }
+
+  const shiftVisibleWeek = (deltaDays: number) => {
+    const nextMonday = addDays(weekStart, deltaDays)
+    setSelectedDate(nextMonday)
+    setPickerMonth(startOfMonth(nextMonday))
+  }
+
+  const selectWeekContainingDay = (d: Date) => {
+    const monday = startOfWeek(d, { weekStartsOn: 1 })
+    setSelectedDate(monday)
+    setPickerMonth(startOfMonth(monday))
+    setWeekPickerOpen(false)
+  }
+
   return (
     <div className="flex-1 flex flex-col p-4 sm:p-8">
       <Button variant="ghost" onClick={() => navigate('/admin')} className="mb-4 self-start">← Назад у меню</Button>
 
       <SocialMediaPoster lessons={weeklyLessons} weekStart={weekStart} weekEnd={weekEnd} />
 
-      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between mb-6 border-b border-border pb-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-6 border-b border-border pb-4">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2 text-foreground"><CalendarIcon className="w-6 h-6 text-brand-gold"/> Тижневий білдер</h1>
+          <h1 className="text-2xl font-bold flex items-center gap-2 text-foreground">
+            <CalendarIcon className="w-6 h-6 text-brand-gold" /> Тижневий білдер
+          </h1>
           <p className="text-sm text-muted-foreground">Створюйте та модифікуйте графік на весь тиждень</p>
         </div>
-
-        <div className="flex items-center gap-3 w-full sm:w-auto">
-          <input type="date" className={cn(inputClasses, "w-44 shadow-sm")} value={selectedDate ? format(selectedDate, 'yyyy-MM-dd') : ''} onChange={e => setSelectedDate(new Date(e.target.value))} />
-          <Button onClick={handleExportPhoto} disabled={isExporting} variant="brand" className="w-full sm:w-auto">
+        <div className="flex flex-col gap-3 w-full sm:w-auto sm:flex-row sm:items-center sm:justify-end">
+          <Popover open={weekPickerOpen} onOpenChange={handleWeekPickerOpenChange}>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                aria-expanded={weekPickerOpen}
+                aria-haspopup="dialog"
+                className="w-full sm:w-auto min-w-[min(100%,17rem)] justify-between gap-3 border-white/12 bg-muted/30 px-3 h-10 hover:bg-brand-gold/10 hover:border-brand-gold/35"
+              >
+                <span className="flex items-center gap-2 min-w-0">
+                  <CalendarIcon className="w-4 h-4 shrink-0 text-brand-gold" />
+                  <span className="text-sm font-semibold tabular-nums truncate">
+                    {format(weekStart, 'dd.MM', { locale: uk })} — {format(weekEnd, 'dd.MM.yyyy', { locale: uk })}
+                  </span>
+                </span>
+                <ChevronDown className="w-4 h-4 shrink-0 opacity-60" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              side="bottom"
+              className="p-0 w-[min(calc(100vw-1.5rem),20rem)]"
+            >
+              <div className="border-b border-white/[0.06] bg-muted/40 px-3 py-2.5">
+                <p className="text-xs font-bold text-brand-gold uppercase tracking-[0.12em]">Оберіть тиждень</p>
+                <p className="text-[11px] text-muted-foreground mt-1 leading-snug">
+                  Натисніть будь-який день у рядку — відкриється весь тиждень (пн–нд)
+                </p>
+              </div>
+              <div className="p-2 pb-3">
+                <div className="flex items-center justify-between gap-2 px-1 pb-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 rounded-md border border-white/10 hover:bg-brand-gold/15 hover:text-brand-gold hover:border-brand-gold/30"
+                    onClick={() => shiftVisibleWeek(-7)}
+                    aria-label="Попередній тиждень"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                  <span className="text-[11px] font-medium text-muted-foreground tabular-nums text-center px-1 min-w-0">
+                    {format(weekStart, 'dd.MM', { locale: uk })} — {format(weekEnd, 'dd.MM', { locale: uk })}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 rounded-md border border-white/10 hover:bg-brand-gold/15 hover:text-brand-gold hover:border-brand-gold/30"
+                    onClick={() => shiftVisibleWeek(7)}
+                    aria-label="Наступний тиждень"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </div>
+                <Calendar
+                  mode="single"
+                  month={pickerMonth}
+                  onMonthChange={setPickerMonth}
+                  selected={weekStart}
+                  onSelect={(d) => {
+                    if (d) selectWeekContainingDay(d)
+                  }}
+                  locale={uk}
+                  weekStartsOn={1}
+                  modifiers={{
+                    activeWeek: eachDayOfInterval({ start: weekStart, end: weekEnd }),
+                  }}
+                  modifiersClassNames={{
+                    activeWeek: 'bg-brand-gold/14 rounded-md',
+                  }}
+                  className="mx-auto"
+                />
+              </div>
+            </PopoverContent>
+          </Popover>
+          <Button onClick={handleExportPhoto} disabled={isExporting} variant="brand" className="w-full sm:w-auto shrink-0">
             <Camera className="w-4 h-4 mr-2" />
             {isExporting ? 'Генерується...' : 'Згенерувати фото (Instagram)'}
           </Button>
@@ -2385,7 +2903,7 @@ function AdminSchedulePage({ lessons, setLessons, trainers, classTypes }: { less
                     <p className="font-bold text-foreground leading-tight">{l.class_name}</p>
                     <p className="text-muted-foreground mt-1 font-medium">{format(l.start_timestamp, 'HH:mm')} - {format(l.end_timestamp, 'HH:mm')}</p>
                     <p className="text-muted-foreground/90 mt-0.5">{l.trainer_name}</p>
-                    <button onClick={() => { if(confirm('Видалити заняття?')) setLessons(p=>p.filter(x=>x.id!==l.id)) }} className="absolute top-1 right-1 w-5 h-5 rounded-md bg-red-950/60 text-red-300 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button type="button" onClick={() => { if (confirm('Видалити заняття?')) void (async () => { try { await studioApi.deleteLessonOnServer(l.id); await reloadAppData() } catch (e) { console.error(e); alert('Не вдалося видалити') } })() }} className="absolute top-1 right-1 w-5 h-5 rounded-md bg-red-950/60 text-red-300 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                       <X className="w-3 h-3" />
                     </button>
                   </div>
@@ -2450,47 +2968,95 @@ function AdminSchedulePage({ lessons, setLessons, trainers, classTypes }: { less
 
 // ── App Init ────────────────────────────────────────────────────────────────
 export default function App() {
-  const [lessons, setLessons] = usePersistentState<ActualLesson[]>('titan_lessons', [
-    { id: '1', class_name: 'Stretching', trainer_name: 'Олена Петренко', start_timestamp: makeDate(new Date(), 9, 0), end_timestamp: makeDate(new Date(), 10, 0), capacity: 10, booked_count: 5, status: 'SCHEDULED' },
-    { id: '2', class_name: 'Yoga', trainer_name: 'Alex Johnson', start_timestamp: makeDate(new Date(), 19, 0), end_timestamp: makeDate(new Date(), 20, 0), capacity: 15, booked_count: 15, status: 'SCHEDULED', is_booked_by_me: true, my_booking_email: 'test@example.com' }
-  ], dateReviver)
+  const [lessons, setLessons] = useState<ActualLesson[]>([])
+  const [clients, setClients] = useState<Client[]>([])
+  const [trainers, setTrainers] = useState<string[]>([])
+  const [classTypes, setClassTypes] = useState<string[]>([])
+  const [plans, setPlans] = useState<SubscriptionPlan[]>(DEFAULT_PLANS)
+  const [promoCodes, setPromoCodes] = useState<PromoCode[]>([])
+  const [studioLoadError, setStudioLoadError] = useState<string | null>(null)
 
-  const [trainers, setTrainers] = usePersistentState<string[]>('titan_trainers', ['Alex Johnson', 'Sarah Smith', 'Mike Tyson', 'Олена Петренко', 'Дмитро Ковтун'])
-  const [classTypes, setClassTypes] = usePersistentState<string[]>('titan_classes', ['Yoga', 'Stretching', 'Crossfit Basics', 'Тайський бокс', 'Pilates 2.0'])
-  const [isAdminLogged, setIsAdminLogged] = usePersistentState<boolean>('titan_admin', false)
-
-  // ── Subscription Plans (Admin-managed) ──
-  const [plans, setPlans] = usePersistentState<SubscriptionPlan[]>('brave_plans', DEFAULT_PLANS)
-
-  // ── Promo Codes (Admin-generated) ──
-  const [promoCodes, setPromoCodes] = usePersistentState<PromoCode[]>('brave_promo_codes', [])
-
-  // ── Client Auth & Data ──
-  const [clients, setClients] = usePersistentState<Client[]>('brave_clients', [])
+  const [isAdminLogged, setIsAdminLogged] = useState(false)
   const [currentClientId, setCurrentClientId] = usePersistentState<string | null>('brave_current_client', null)
 
-  const currentClient = useMemo(() =>
-    clients.find(c => c.id === currentClientId) || null
-  , [clients, currentClientId])
+  const endAdminSession = useCallback(async () => {
+    try {
+      await fetch('/api/admin/session', { method: 'DELETE', credentials: 'include' })
+    } finally {
+      setIsAdminLogged(false)
+    }
+  }, [])
 
-  // Restore Supabase session on page reload
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const r = await fetch('/api/admin/session', { credentials: 'include' })
+        const data = (await r.json()) as { loggedIn?: boolean }
+        if (!cancelled) setIsAdminLogged(!!data.loggedIn)
+      } catch {
+        if (!cancelled) setIsAdminLogged(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  const reloadAppData = useCallback(async () => {
+    try {
+      const data = await studioApi.fetchBootstrap()
+      setLessons(
+        data.lessons.map(l => ({
+          id: l.id,
+          class_name: l.class_name,
+          trainer_name: l.trainer_name,
+          start_timestamp: new Date(l.start_timestamp),
+          end_timestamp: new Date(l.end_timestamp),
+          capacity: l.capacity,
+          booked_count: l.booked_count,
+          status: l.status as LessonStatus,
+        }))
+      )
+      setClients(data.clients as Client[])
+      setTrainers(data.trainers)
+      setClassTypes(data.classTypes)
+      setPlans(data.plans as SubscriptionPlan[])
+      setPromoCodes(data.promoCodes as PromoCode[])
+      setStudioLoadError(null)
+    } catch (e) {
+      console.error(e)
+      setStudioLoadError(e instanceof Error ? e.message : 'Не вдалося завантажити дані з сервера')
+    }
+  }, [])
+
+  useEffect(() => {
+    void reloadAppData()
+  }, [reloadAppData])
+
+  const currentClient = useMemo(
+    () => clients.find(c => c.id === currentClientId) || null,
+    [clients, currentClientId]
+  )
+
+  const lessonsForViewer = useMemo(
+    () => mergeLessonsForViewer(lessons, currentClient),
+    [lessons, currentClient]
+  )
+
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session?.user) {
-        const uid = session.user.id
-        // If no local client record yet, fetch from Supabase User table
-        if (!clients.find(c => c.id === uid)) {
-          const { data: profile } = await supabase.from('User').select('*').eq('id', uid).single()
-          if (profile) {
-            const restoredClient: Client = { id: profile.id, name: profile.name, email: profile.email, phone: profile.phone, password: '', subscriptions: [], bookings: [] }
-            setClients(prev => {
-              if (prev.find(c => c.id === uid)) return prev
-              return [...prev, restoredClient]
-            })
-          }
-        }
-        setCurrentClientId(uid)
+      if (!session?.user) return
+      const uid = session.user.id
+      const { data: profile } = await supabase.from('User').select('*').eq('id', uid).single()
+      if (profile) {
+        await studioApi.upsertStudioClient({
+          id: profile.id,
+          email: profile.email,
+          name: profile.name,
+          phone: profile.phone || '',
+        })
       }
+      await reloadAppData()
+      setCurrentClientId(uid)
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -2500,20 +3066,40 @@ export default function App() {
     setCurrentClientId(null)
   }
 
+  if (studioLoadError && lessons.length === 0 && clients.length === 0) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 text-center gap-4">
+        <AlertTriangle className="w-12 h-12 text-amber-500" />
+        <p className="text-foreground font-semibold max-w-md">Не вдалося завантажити дані студії.</p>
+        <p className="text-sm text-muted-foreground max-w-lg">{studioLoadError}</p>
+        <p className="text-xs text-muted-foreground max-w-lg">
+          Перевірте змінні середовища на Vercel або локально у <code className="bg-muted px-1 rounded">frontend/.env</code>:{' '}
+          <code className="bg-muted px-1 rounded">DATABASE_URL</code>,{' '}
+          <code className="bg-muted px-1 rounded">NEXT_PUBLIC_SUPABASE_URL</code>,{' '}
+          <code className="bg-muted px-1 rounded">NEXT_PUBLIC_SUPABASE_ANON_KEY</code>,{' '}
+          для адмінки — <code className="bg-muted px-1 rounded">ADMIN_SESSION_SECRET</code> (мін. 16 символів) та{' '}
+          <code className="bg-muted px-1 rounded">ADMIN_DASHBOARD_PASSWORD</code>.
+          Для листів — <code className="bg-muted px-1 rounded">SMTP_EMAIL</code> / <code className="bg-muted px-1 rounded">SMTP_PASSWORD</code>.
+        </p>
+        <Button type="button" variant="brand" onClick={() => void reloadAppData()}>Спробувати знову</Button>
+      </div>
+    )
+  }
+
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<ClientPage lessons={lessons} setLessons={setLessons} currentClient={currentClient} onClientLogout={handleClientLogout} />} />
-        <Route path="/book/:id" element={<BookingPage lessons={lessons} setLessons={setLessons} currentClient={currentClient} setClients={setClients} plans={plans} onClientLogout={handleClientLogout} />} />
-        <Route path="/cancel/:id" element={<CancelBookingPage lessons={lessons} setLessons={setLessons} />} />
-        <Route path="/auth" element={<AuthPage clients={clients} setClients={setClients} setCurrentClientId={setCurrentClientId} />} />
-        <Route path="/dashboard" element={<ClientDashboardPage currentClient={currentClient} setClients={setClients} onClientLogout={handleClientLogout} plans={plans} promoCodes={promoCodes} setPromoCodes={setPromoCodes} />} />
+        <Route path="/" element={<ClientPage lessons={lessonsForViewer} currentClient={currentClient} onClientLogout={handleClientLogout} reloadAppData={reloadAppData} />} />
+        <Route path="/book/:id" element={<BookingPage lessons={lessonsForViewer} currentClient={currentClient} plans={plans} onClientLogout={handleClientLogout} reloadAppData={reloadAppData} />} />
+        <Route path="/cancel/:id" element={<CancelBookingPage reloadAppData={reloadAppData} />} />
+        <Route path="/auth" element={<AuthPage setCurrentClientId={setCurrentClientId} reloadAppData={reloadAppData} />} />
+        <Route path="/dashboard" element={<ClientDashboardPage currentClient={currentClient} onClientLogout={handleClientLogout} plans={plans} promoCodes={promoCodes} reloadAppData={reloadAppData} />} />
 
         {/* Admin Section */}
-        <Route path="/admin" element={<AdminLayout isAdminLogged={isAdminLogged} setIsAdminLogged={setIsAdminLogged} />}>
+        <Route path="/admin" element={<AdminLayout isAdminLogged={isAdminLogged} setIsAdminLogged={setIsAdminLogged} onAdminLogout={endAdminSession} onAdminLoggedIn={reloadAppData} />}>
           <Route index element={<AdminHub />} />
-          <Route path="schedule" element={<AdminSchedulePage lessons={lessons} setLessons={setLessons} trainers={trainers} classTypes={classTypes} />} />
-          <Route path="settings" element={<AdminSettingsPage trainers={trainers} setTrainers={setTrainers} classTypes={classTypes} setClassTypes={setClassTypes} plans={plans} setPlans={setPlans} promoCodes={promoCodes} setPromoCodes={setPromoCodes} />} />
+          <Route path="schedule" element={<AdminSchedulePage lessons={lessons} trainers={trainers} classTypes={classTypes} reloadAppData={reloadAppData} />} />
+          <Route path="settings" element={<AdminSettingsPage trainers={trainers} classTypes={classTypes} plans={plans} promoCodes={promoCodes} reloadAppData={reloadAppData} />} />
           <Route path="stats" element={<AdminStatsPage lessons={lessons} clients={clients} trainers={trainers} plans={plans} />} />
         </Route>
       </Routes>

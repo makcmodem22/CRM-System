@@ -1,6 +1,12 @@
-import { createClient } from '@supabase/supabase-js'
+'use client'
 
-const SUPABASE_URL = 'https://ymlgvisfbtafkujnzjcj.supabase.co'
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InltbGd2aXNmYnRhZmt1am56amNqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5OTUwMzgsImV4cCI6MjA5MDU3MTAzOH0.xb3ID81uvyl93AX-hfppD-wQrRJQPM6V8mMxlJGnwb8'
+import { createBrowserClient } from '@supabase/ssr'
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+
+/**
+ * Cookie-backed session so Server Actions (`getSupabaseUserId`) see the same user.
+ * Plain `createClient` from `@supabase/supabase-js` keeps the session in localStorage only → always "Unauthorized" on the server.
+ */
+export const supabase = createBrowserClient(url, anon)

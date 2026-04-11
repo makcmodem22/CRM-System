@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import nodemailer from 'nodemailer';
+import { registerStudioRoutes } from './studioRoutes';
 
 dotenv.config();
 
@@ -11,8 +12,15 @@ const port = process.env.PORT || 3000;
 
 export const prisma = new PrismaClient();
 
-app.use(cors());
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+  })
+);
 app.use(express.json());
+
+registerStudioRoutes(app, prisma);
 
 app.get('/health', async (req: Request, res: Response) => {
   try {
@@ -30,6 +38,9 @@ const transporter = nodemailer.createTransport({
     pass: process.env.SMTP_PASSWORD
   }
 });
+
+const publicFrontendBase = () =>
+  (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
 
 app.post('/api/send-booking-email', async (req: Request, res: Response) => {
   const { email, clientName, className, startTime, trainerName, lessonId } = req.body;
@@ -82,7 +93,7 @@ app.post('/api/send-booking-email', async (req: Request, res: Response) => {
           </p>
           
           <div style="text-align: center;">
-            <a href="http://localhost:5173/cancel/${lessonId}" style="display: inline-block; padding: 14px 28px; background-color: #FEF2F2; color: #DC2626; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px; border: 1px solid #FEE2E2;">Скасувати бронювання</a>
+            <a href="${publicFrontendBase()}/cancel/${lessonId}?email=${encodeURIComponent(email || '')}" style="display: inline-block; padding: 14px 28px; background-color: #FEF2F2; color: #DC2626; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px; border: 1px solid #FEE2E2;">Скасувати бронювання</a>
           </div>
         </div>
 
