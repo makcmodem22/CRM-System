@@ -37,8 +37,9 @@ function Calendar({
           "h-9 w-9 p-0 font-normal rounded-md transition-colors hover:bg-accent hover:text-accent-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 aria-selected:opacity-100 inline-flex items-center justify-center w-full"
         ),
         selected:
-          "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground rounded-md shadow-sm",
-        today: "bg-accent/60 text-accent-foreground font-semibold rounded-md",
+          "bg-brand-gold text-brand-charcoal hover:bg-brand-gold-light hover:text-brand-charcoal focus:bg-brand-gold focus:text-brand-charcoal rounded-md shadow-sm font-semibold",
+        today:
+          "bg-brand-gold/15 text-brand-gold font-semibold rounded-md ring-1 ring-brand-gold/30",
         outside: "text-muted-foreground opacity-40",
         disabled: "text-muted-foreground opacity-30 cursor-not-allowed",
         hidden: "invisible",

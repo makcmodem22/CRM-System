@@ -96,7 +96,7 @@ const DEFAULT_PLANS: SubscriptionPlan[] = [
   { id: 'plan_15', name: 'Абонемент на 15 занять', sessions: 15, price: 3000, duration_days: 30 },
 ]
 
-const inputClasses = "flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+const inputClasses = "flex h-10 w-full rounded-md border border-white/10 bg-muted/45 px-3 py-2 text-sm text-foreground ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-gold/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
 
 const makeDate = (baseDate: Date, h: number, m: number): Date => {
   const d = new Date(baseDate)
@@ -145,18 +145,19 @@ function Header({ role, onLogout, currentClient, onClientLogout }: {
 }) {
   const navigate = useNavigate()
   const roleColors = {
-    CLIENT:  'bg-emerald-500/10 text-emerald-600 border-emerald-500/30',
-    TRAINER: 'bg-blue-500/10 text-blue-600 border-blue-500/30',
-    ADMIN:   'bg-purple-500/10 text-purple-600 border-purple-500/30',
+    CLIENT:  'bg-brand-gold/20 text-brand-gold-light border-brand-gold/40',
+    TRAINER: 'bg-white/10 text-white/95 border-white/25',
+    ADMIN:   'bg-brand-gold/25 text-brand-gold-light border-brand-gold/45',
   }
 
   return (
-    <header className="sticky top-0 z-40 backdrop-blur-xl bg-white/80 border-b border-gray-200 shadow-sm">
-      <div className="container flex h-16 items-center justify-between px-4 sm:px-8">
-        <Link to={role === 'ADMIN' ? '/admin' : '/'} className="flex gap-2.5 items-center">
-          <img src={logoImg} alt="Brave! Yoga" className="w-10 h-10 rounded-full object-cover shadow-sm" />
-          <span className="text-xl font-bold tracking-tight text-slate-900 flex items-baseline gap-1">
-            <span className="italic font-serif text-[#DDA343]">Brave!</span> <span className="text-slate-700 font-medium">Yoga</span>
+    <header className="sticky top-0 z-40 border-b border-white/[0.08] bg-[#0f1624]/90 text-foreground shadow-lg shadow-black/30 backdrop-blur-xl">
+      <div className="container flex h-[4.25rem] items-center justify-between px-4 sm:px-8">
+        <Link to={role === 'ADMIN' ? '/admin' : '/'} className="flex gap-3 items-center group">
+          <img src={logoImg} alt="Brave! Yoga" className="w-11 h-11 rounded-full object-cover ring-2 ring-brand-gold/40 shadow-md" />
+          <span className="flex flex-col leading-none gap-0.5">
+            <span className="font-brand-script text-2xl text-brand-gold">Brave!</span>
+            <span className="font-brand-sans text-[0.65rem] text-foreground/85 tracking-[0.2em]">Yoga</span>
           </span>
         </Link>
         <div className="flex items-center gap-3">
@@ -166,22 +167,22 @@ function Header({ role, onLogout, currentClient, onClientLogout }: {
                 variant="outline"
                 size="sm"
                 onClick={() => navigate('/dashboard')}
-                className="text-xs border-[#DDA343]/30 text-[#DDA343] hover:bg-[#DDA343]/10 gap-1.5"
+                className="text-xs border-brand-gold/45 text-brand-gold bg-foreground/[0.04] hover:bg-brand-gold/15 hover:text-brand-gold-light gap-1.5"
               >
                 <Crown className="w-3.5 h-3.5" />
                 Кабінет
               </Button>
-              <Button variant="ghost" size="icon" onClick={onClientLogout} className="text-slate-500 ring-1 ring-slate-200 rounded-full hover:bg-red-50 hover:text-red-600 hover:ring-red-200 w-8 h-8">
+              <Button variant="ghost" size="icon" onClick={onClientLogout} className="text-muted-foreground rounded-full hover:bg-red-500/25 hover:text-red-200 w-8 h-8">
                 <LogOut className="w-3.5 h-3.5" />
               </Button>
             </>
           )}
           {role === 'CLIENT' && !currentClient && (
             <Button
-              variant="outline"
+              variant="brand"
               size="sm"
               onClick={() => navigate('/auth')}
-              className="text-xs gap-1.5"
+              className="text-xs gap-1.5 h-9"
             >
               <User className="w-3.5 h-3.5" />
               Увійти
@@ -189,11 +190,11 @@ function Header({ role, onLogout, currentClient, onClientLogout }: {
           )}
           {role === 'ADMIN' && (
             <>
-              <Badge variant="outline" className={cn('uppercase tracking-widest text-[9px] px-2 py-0.5 shadow-sm', roleColors[role])}>
+              <Badge variant="outline" className={cn('uppercase tracking-widest text-[9px] px-2 py-0.5', roleColors[role])}>
                 {role}
               </Badge>
               {onLogout && (
-                <Button variant="ghost" size="icon" onClick={onLogout} className="text-slate-500 ring-1 ring-slate-200 rounded-full hover:bg-red-50 hover:text-red-600 hover:ring-red-200">
+                <Button variant="ghost" size="icon" onClick={onLogout} className="text-muted-foreground rounded-full hover:bg-red-500/25 hover:text-red-200">
                   <LogOut className="w-4 h-4" />
                 </Button>
               )}
@@ -240,13 +241,13 @@ function ClientPage({ lessons, setLessons, currentClient, onClientLogout }: {
   const activeSub = getActiveSubscription(currentClient)
 
   return (
-    <div className="min-h-screen bg-[#f9f9fb] font-sans text-foreground">
+    <div className="min-h-screen bg-background font-sans text-foreground">
       <Header role="CLIENT" currentClient={currentClient} onClientLogout={onClientLogout} />
       <main className="container px-4 sm:px-8 pt-10 pb-24 grid grid-cols-1 md:grid-cols-12 gap-8">
         <div className="md:col-span-4 lg:col-span-3 space-y-5">
-          <Card className="bg-white shadow-sm border border-gray-200">
-            <CardHeader className="pb-2 border-b border-gray-100">
-              <CardTitle className="text-sm font-semibold text-slate-600 uppercase tracking-wider">Оберіть дату</CardTitle>
+          <Card className="border-white/[0.08] overflow-hidden bg-secondary/25 shadow-md shadow-black/15">
+            <CardHeader className="pb-2 border-b border-white/[0.06] bg-muted/40">
+              <CardTitle className="text-xs font-bold text-brand-gold uppercase tracking-[0.15em]">Оберіть дату</CardTitle>
             </CardHeader>
             <CardContent className="pt-3 px-2">
               <Calendar mode="single" selected={selectedDate} onSelect={setSelectedDate} className="mx-auto" />
@@ -255,11 +256,12 @@ function ClientPage({ lessons, setLessons, currentClient, onClientLogout }: {
 
           {/* Active Subscription Widget */}
           {currentClient && activeSub && (
-            <Card className="bg-gradient-to-br from-[#1B3A6B] to-[#0F2548] text-white shadow-lg border-0">
-              <CardContent className="p-4 space-y-3">
+            <Card className="relative overflow-hidden bg-gradient-to-br from-brand-navy to-brand-navy-dark text-primary-foreground shadow-lg border-0 ring-1 ring-brand-gold/25">
+              <div className="pointer-events-none absolute -right-8 -top-8 h-32 w-32 rounded-full border border-brand-gold/20" aria-hidden />
+              <CardContent className="relative p-4 space-y-3">
                 <div className="flex items-center gap-2">
-                  <Crown className="w-4 h-4 text-[#DDA343]" />
-                  <span className="text-xs font-semibold text-[#DDA343] uppercase tracking-wider">Ваш абонемент</span>
+                  <Crown className="w-4 h-4 text-brand-gold" />
+                  <span className="text-xs font-bold text-brand-gold uppercase tracking-[0.12em]">Ваш абонемент</span>
                 </div>
                 <p className="font-bold text-sm">{activeSub.plan_name}</p>
                 <div className="space-y-1.5">
@@ -269,7 +271,7 @@ function ClientPage({ lessons, setLessons, currentClient, onClientLogout }: {
                   </div>
                   <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-gradient-to-r from-[#DDA343] to-[#F0C75E] rounded-full transition-all"
+                      className="h-full bg-gradient-to-r from-brand-gold to-brand-gold-light rounded-full transition-all"
                       style={{ width: `${(activeSub.used_sessions / activeSub.total_sessions) * 100}%` }}
                     />
                   </div>
@@ -284,8 +286,8 @@ function ClientPage({ lessons, setLessons, currentClient, onClientLogout }: {
 
         <div className="md:col-span-8 lg:col-span-9 space-y-6">
           <div>
-            <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Розклад занять</h2>
-            <p className="text-sm text-slate-500 mt-0.5">{selectedDate ? format(selectedDate, 'EEEE, d MMMM yyyy', { locale: uk }) : 'Оберіть дату'}</p>
+            <h2 className="text-3xl font-bold text-foreground tracking-tight">Розклад занять</h2>
+            <p className="text-sm text-muted-foreground mt-1">{selectedDate ? format(selectedDate, 'EEEE, d MMMM yyyy', { locale: uk }) : 'Оберіть дату'}</p>
           </div>
 
           <div className="grid gap-3">
@@ -294,16 +296,16 @@ function ClientPage({ lessons, setLessons, currentClient, onClientLogout }: {
                 const isFull = lesson.booked_count >= lesson.capacity
                 return (
                   <motion.div key={lesson.id} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.05, duration: 0.3 }}>
-                    <Card className={cn("bg-white border shadow-sm overflow-hidden", lesson.is_booked_by_me ? "border-emerald-200" : "border-gray-200")}>
-                      <div className={cn("h-1 w-full", lesson.is_booked_by_me ? "bg-gradient-to-r from-emerald-400 to-emerald-500" : "bg-gradient-to-r from-[#DDA343] to-[#F0C75E]")} />
+                    <Card className={cn("overflow-hidden border-white/[0.07] bg-muted/40 shadow-md shadow-black/20", lesson.is_booked_by_me ? "ring-1 ring-brand-gold/40 border-brand-gold/35" : "")}>
+                      <div className={cn("h-1 w-full", lesson.is_booked_by_me ? "bg-gradient-to-r from-brand-navy to-brand-navy-dark" : "bg-gradient-to-r from-brand-gold to-brand-gold-light")} />
                       <div className="p-5 flex flex-col sm:flex-row gap-5 items-start sm:items-center justify-between">
                         <div className="space-y-2.5 flex-1 min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-base font-bold text-slate-900">{lesson.class_name}</h3>
-                            {lesson.is_booked_by_me && <Badge className="bg-emerald-500 text-white border-0 text-[10px] px-2">Ви записані</Badge>}
+                            <h3 className="text-base font-bold text-foreground">{lesson.class_name}</h3>
+                            {lesson.is_booked_by_me && <Badge className="bg-brand-gold text-brand-charcoal border-0 text-[10px] px-2">Ви записані</Badge>}
                             {isFull && !lesson.is_booked_by_me && <Badge variant="destructive" className="text-[10px] px-2">Місць немає</Badge>}
                           </div>
-                          <div className="flex flex-wrap gap-4 text-xs text-slate-500">
+                          <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
                             <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" />{format(lesson.start_timestamp, 'HH:mm')} – {format(lesson.end_timestamp, 'HH:mm')}</span>
                             <span className="flex items-center gap-1.5"><User className="w-3.5 h-3.5" />{lesson.trainer_name}</span>
                             <span className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5" />{lesson.booked_count} / {lesson.capacity} місць</span>
@@ -311,11 +313,11 @@ function ClientPage({ lessons, setLessons, currentClient, onClientLogout }: {
                         </div>
                         <div className="w-full sm:w-auto shrink-0 flex gap-2">
                           {!lesson.is_booked_by_me ? (
-                            <Button size="sm" disabled={isFull} onClick={() => navigate(`/book/${lesson.id}`)} className="w-full sm:w-28 bg-slate-900 hover:bg-slate-800 text-white">
+                            <Button size="sm" disabled={isFull} onClick={() => navigate(`/book/${lesson.id}`)} className="w-full sm:w-28">
                               Записатись
                             </Button>
                           ) : (
-                            <Button size="sm" variant="outline" onClick={() => openCancelDialog(lesson)} className="w-full sm:w-28 border-red-200 text-red-600 hover:bg-red-50">
+                            <Button size="sm" variant="outline" onClick={() => openCancelDialog(lesson)} className="w-full sm:w-28 border-red-400/35 text-red-300 hover:bg-red-500/15 hover:text-red-200">
                               Скасувати
                             </Button>
                           )}
@@ -327,7 +329,7 @@ function ClientPage({ lessons, setLessons, currentClient, onClientLogout }: {
               })}
             </AnimatePresence>
             {filteredLessons.length === 0 && (
-              <div className="py-24 text-center text-slate-400 border border-dashed border-gray-200 rounded-xl bg-white/50">
+              <div className="py-24 text-center text-muted-foreground border border-dashed border-border rounded-xl bg-card/60 backdrop-blur-sm">
                 <p>На цей день не знайдено занять.</p>
               </div>
             )}
@@ -344,9 +346,9 @@ function ClientPage({ lessons, setLessons, currentClient, onClientLogout }: {
           </DialogHeader>
           <div className="py-2">
              {cancelBlocked ? (
-               <p className="text-sm text-red-700 bg-red-50 p-4 rounded-xl border border-red-100">Скасування неможливе — до початку заняття залишилось менше 6 годин.</p>
+               <p className="text-sm text-red-200 bg-red-950/40 p-4 rounded-xl border border-red-500/25">Скасування неможливе — до початку заняття залишилось менше 6 годин.</p>
              ) : (
-               <p className="text-sm text-amber-800 bg-amber-50 p-4 rounded-xl border border-amber-100">Більше ніж 6 годин. Буде ініційовано повернення коштів (Refund).</p>
+               <p className="text-sm text-amber-100 bg-amber-950/35 p-4 rounded-xl border border-amber-500/25">Більше ніж 6 годин. Буде ініційовано повернення коштів (Refund).</p>
              )}
           </div>
           <DialogFooter>
@@ -463,30 +465,30 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
   // ── Success screen ──
   if (step === 'success') {
     return (
-      <div className="min-h-screen bg-[#f9f9fb] flex items-center justify-center p-4">
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-md">
-          <Card className="shadow-xl border-emerald-100 bg-white text-center">
+          <Card className="shadow-xl border-brand-gold/25 bg-card text-center ring-1 ring-brand-navy/5">
             <CardContent className="pt-10 pb-8 px-6 space-y-6">
-              <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
+              <div className="w-16 h-16 bg-brand-gold/25 text-brand-charcoal rounded-full flex items-center justify-center mx-auto mb-4 ring-2 ring-brand-gold/40">
                 <Check className="w-8 h-8" />
               </div>
               <div>
-                <h2 className="text-2xl font-bold text-slate-900 mb-2">Успішно заброньовано!</h2>
-                <p className="text-slate-500">Час заняття: {format(lesson.start_timestamp, 'HH:mm')}</p>
+                <h2 className="text-2xl font-bold text-foreground mb-2">Успішно заброньовано!</h2>
+                <p className="text-muted-foreground">Час заняття: {format(lesson.start_timestamp, 'HH:mm')}</p>
                 {activeSub && (
-                  <p className="text-sm text-emerald-600 mt-2 font-medium">
+                  <p className="text-sm text-foreground mt-2 font-medium">
                     Списано 1 візит з абонементу (залишилось {activeSub.total_sessions - activeSub.used_sessions - 1})
                   </p>
                 )}
               </div>
-              <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 text-left">
-                <p className="text-sm font-semibold text-emerald-900 mb-1">📩 Лист відправлено на пошту!</p>
-                <p className="text-xs text-emerald-700 leading-relaxed">
+              <div className="bg-brand-gold/10 border border-brand-gold/25 rounded-xl p-4 text-left">
+                <p className="text-sm font-semibold text-foreground mb-1">📩 Лист відправлено на пошту!</p>
+                <p className="text-xs text-muted-foreground leading-relaxed">
                   Ми надіслали підтвердження на <b>{currentClient?.email || email}</b>.<br/><br/>
                   У листі ви знайдете всю інформацію про заняття та посилання для скасування запису, якщо ваші плани зміняться.
                 </p>
               </div>
-              <Button className="w-full mt-4" onClick={() => navigate('/')}>Перейти до розкладу</Button>
+              <Button variant="brand" className="w-full mt-4" onClick={() => navigate('/')}>Перейти до розкладу</Button>
             </CardContent>
           </Card>
         </motion.div>
@@ -495,17 +497,17 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
   }
 
   return (
-    <div className="min-h-screen bg-[#f9f9fb] font-sans flex flex-col">
+    <div className="min-h-screen bg-background font-sans flex flex-col">
       <Header role="CLIENT" currentClient={currentClient} onClientLogout={onClientLogout} />
       <main className="flex-1 container max-w-2xl mx-auto p-4 sm:p-8 flex items-start justify-center pt-8">
         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full">
           {/* Lesson Info */}
-          <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm space-y-2 mb-6">
+          <div className="p-4 rounded-xl bg-muted/50 border border-white/[0.07] shadow-md shadow-black/20 space-y-2 mb-6">
             <div className="flex items-start gap-3">
               <img src={logoImg} alt="" className="w-10 h-10 rounded-full mt-0.5" />
               <div>
-                <p className="font-bold text-slate-900 text-lg">{lesson.class_name}</p>
-                <div className="flex flex-wrap gap-4 text-sm text-slate-500 mt-1">
+                <p className="font-bold text-foreground text-lg">{lesson.class_name}</p>
+                <div className="flex flex-wrap gap-4 text-sm text-muted-foreground mt-1">
                   <span className="flex items-center gap-1.5"><Clock className="w-4 h-4" />{format(lesson.start_timestamp, 'd MMMM, HH:mm', {locale: uk})}</span>
                   <span className="flex items-center gap-1.5"><User className="w-4 h-4" />{lesson.trainer_name}</span>
                 </div>
@@ -517,30 +519,30 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
           {step === 'choose' && (
             <div className="space-y-4">
               <div>
-                <Button variant="ghost" className="p-0 h-auto mb-3 text-slate-500 hover:bg-transparent hover:text-slate-800" onClick={()=>navigate('/')}>← Назад до розкладу</Button>
-                <h2 className="text-xl font-bold text-slate-900">Оберіть тип візиту</h2>
-                <p className="text-sm text-slate-500 mt-1">Одноразовий візит або за абонементом</p>
+                <Button variant="ghost" className="p-0 h-auto mb-3 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={()=>navigate('/')}>← Назад до розкладу</Button>
+                <h2 className="text-xl font-bold text-foreground">Оберіть тип візиту</h2>
+                <p className="text-sm text-muted-foreground mt-1">Одноразовий візит або за абонементом</p>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
                 {/* Single Visit Card */}
                 <Card
-                  className="cursor-pointer border-2 border-transparent hover:border-slate-300 hover:shadow-md transition-all group"
+                  className="cursor-pointer border-2 border-transparent hover:border-border hover:shadow-md transition-all group"
                   onClick={() => setStep('single_form')}
                 >
                   <CardContent className="p-6 space-y-4">
-                    <div className="w-14 h-14 rounded-2xl bg-slate-100 text-slate-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <div className="w-14 h-14 rounded-2xl bg-muted text-muted-foreground flex items-center justify-center group-hover:scale-110 transition-transform">
                       <Ticket className="w-7 h-7" />
                     </div>
                     <div>
-                      <h3 className="font-bold text-lg text-slate-900">Одноразовий візит</h3>
-                      <p className="text-sm text-slate-500 mt-1">Без реєстрації. Просто заповніть форму.</p>
+                      <h3 className="font-bold text-lg text-foreground">Одноразовий візит</h3>
+                      <p className="text-sm text-muted-foreground mt-1">Без реєстрації. Просто заповніть форму.</p>
                     </div>
                     <div className="flex items-baseline gap-1">
-                      <span className="text-2xl font-black text-slate-900">{SINGLE_VISIT_PRICE}</span>
-                      <span className="text-sm text-slate-500">₴</span>
+                      <span className="text-2xl font-black text-foreground">{SINGLE_VISIT_PRICE}</span>
+                      <span className="text-sm text-muted-foreground">₴</span>
                     </div>
-                    <div className="flex items-center gap-1 text-sm text-slate-400 group-hover:text-slate-600 transition-colors">
+                    <div className="flex items-center gap-1 text-sm text-muted-foreground/90 group-hover:text-muted-foreground transition-colors">
                       <span>Обрати</span>
                       <ChevronRight className="w-4 h-4" />
                     </div>
@@ -549,7 +551,7 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
 
                 {/* Subscription Card */}
                 <Card
-                  className="cursor-pointer border-2 border-transparent hover:border-[#DDA343]/50 hover:shadow-md transition-all group relative overflow-hidden"
+                  className="cursor-pointer border-2 border-transparent hover:border-brand-gold/50 hover:shadow-md transition-all group relative overflow-hidden"
                   onClick={() => {
                     if (!currentClient) {
                       navigate(`/auth?redirect=/book/${lesson.id}`)
@@ -560,16 +562,16 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
                     }
                   }}
                 >
-                  <div className="absolute top-0 right-0 bg-gradient-to-l from-[#DDA343] to-[#F0C75E] text-white text-[10px] font-bold px-3 py-1 rounded-bl-lg uppercase tracking-wider">
+                  <div className="absolute top-0 right-0 bg-gradient-to-l from-brand-gold to-brand-gold-light text-brand-charcoal text-[10px] font-bold px-3 py-1 rounded-bl-lg uppercase tracking-wider">
                     Вигідно
                   </div>
                   <CardContent className="p-6 space-y-4">
-                    <div className="w-14 h-14 rounded-2xl bg-[#DDA343]/10 text-[#DDA343] flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <div className="w-14 h-14 rounded-2xl bg-brand-gold/10 text-brand-gold flex items-center justify-center group-hover:scale-110 transition-transform">
                       <Crown className="w-7 h-7" />
                     </div>
                     <div>
-                      <h3 className="font-bold text-lg text-slate-900">За абонементом</h3>
-                      <p className="text-sm text-slate-500 mt-1">
+                      <h3 className="font-bold text-lg text-foreground">За абонементом</h3>
+                      <p className="text-sm text-muted-foreground mt-1">
                         {currentClient
                           ? activeSub
                             ? `Залишилось ${activeSub.total_sessions - activeSub.used_sessions} візитів`
@@ -578,10 +580,10 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
                       </p>
                     </div>
                     <div className="flex items-baseline gap-1">
-                      <span className="text-lg font-bold text-[#DDA343]">від {Math.min(...plans.map(p => Math.round(p.price / p.sessions)))}₴</span>
-                      <span className="text-sm text-slate-400">за заняття</span>
+                      <span className="text-lg font-bold text-brand-gold">від {Math.min(...plans.map(p => Math.round(p.price / p.sessions)))}₴</span>
+                      <span className="text-sm text-muted-foreground/90">за заняття</span>
                     </div>
-                    <div className="flex items-center gap-1 text-sm text-slate-400 group-hover:text-[#DDA343] transition-colors">
+                    <div className="flex items-center gap-1 text-sm text-muted-foreground/90 group-hover:text-brand-gold transition-colors">
                       <span>Обрати</span>
                       <ChevronRight className="w-4 h-4" />
                     </div>
@@ -593,34 +595,34 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
 
           {/* Step: Single Visit Form */}
           {step === 'single_form' && (
-            <Card className="shadow-lg border-gray-200">
-              <CardHeader className="pb-4 border-b border-gray-100 bg-slate-50/50 rounded-t-xl">
-                <Button variant="ghost" className="w-fit p-0 h-auto mb-2 text-slate-500 hover:bg-transparent hover:text-slate-800" onClick={() => setStep('choose')}>← Назад до вибору</Button>
+            <Card className="shadow-lg border-border">
+              <CardHeader className="pb-4 border-b border-border/70 bg-muted/50 rounded-t-xl">
+                <Button variant="ghost" className="w-fit p-0 h-auto mb-2 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => setStep('choose')}>← Назад до вибору</Button>
                 <CardTitle className="text-xl font-bold flex items-center gap-2">
-                  <Ticket className="w-5 h-5 text-slate-400" />
+                  <Ticket className="w-5 h-5 text-muted-foreground/90" />
                   Одноразовий візит — {SINGLE_VISIT_PRICE}₴
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-6">
                 {currentClient && (
-                  <div className="mb-4 p-3 bg-emerald-50 border border-emerald-100 rounded-lg text-sm text-emerald-700 flex items-center gap-2">
+                  <div className="mb-4 p-3 bg-brand-gold/10 border border-brand-gold/25 rounded-lg text-sm text-foreground flex items-center gap-2">
                     <Check className="w-4 h-4 shrink-0" /> Дані підставлено з вашого профілю
                   </div>
                 )}
                 <form onSubmit={handleBookSingle} className="space-y-4">
                   <div>
-                    <label className="text-sm font-medium text-slate-700 mb-1 flex items-center gap-1.5"><User className="w-3.5 h-3.5" /> Ваше ім'я</label>
-                    <input required placeholder="Іван Іванов" value={name} onChange={e=>setName(e.target.value)} className={cn(inputClasses, currentClient ? 'bg-slate-50 text-slate-600' : '')} readOnly={!!currentClient} />
+                    <label className="text-sm font-medium text-foreground/90 mb-1 flex items-center gap-1.5"><User className="w-3.5 h-3.5" /> Ваше ім'я</label>
+                    <input required placeholder="Іван Іванов" value={name} onChange={e=>setName(e.target.value)} className={cn(inputClasses, currentClient ? 'bg-muted/70 text-muted-foreground' : '')} readOnly={!!currentClient} />
                   </div>
                   <div>
-                    <label className="text-sm font-medium text-slate-700 mb-1 flex items-center gap-1.5"><Phone className="w-3.5 h-3.5" /> Номер телефону</label>
-                    <input required type="tel" placeholder="+380 99 000 00 00" value={phone} onChange={e=>setPhone(e.target.value)} className={cn(inputClasses, currentClient ? 'bg-slate-50 text-slate-600' : '')} readOnly={!!currentClient} />
+                    <label className="text-sm font-medium text-foreground/90 mb-1 flex items-center gap-1.5"><Phone className="w-3.5 h-3.5" /> Номер телефону</label>
+                    <input required type="tel" placeholder="+380 99 000 00 00" value={phone} onChange={e=>setPhone(e.target.value)} className={cn(inputClasses, currentClient ? 'bg-muted/70 text-muted-foreground' : '')} readOnly={!!currentClient} />
                   </div>
                   <div>
-                    <label className="text-sm font-medium text-slate-700 mb-1 flex items-center gap-1.5"><Mail className="w-3.5 h-3.5" /> Email для підтвердження</label>
-                    <input required type="email" placeholder="ivan@example.com" value={email} onChange={e=>setEmail(e.target.value)} className={cn(inputClasses, currentClient ? 'bg-slate-50 text-slate-600' : '')} readOnly={!!currentClient} />
+                    <label className="text-sm font-medium text-foreground/90 mb-1 flex items-center gap-1.5"><Mail className="w-3.5 h-3.5" /> Email для підтвердження</label>
+                    <input required type="email" placeholder="ivan@example.com" value={email} onChange={e=>setEmail(e.target.value)} className={cn(inputClasses, currentClient ? 'bg-muted/70 text-muted-foreground' : '')} readOnly={!!currentClient} />
                   </div>
-                  <Button type="submit" disabled={isProcessing} className="w-full h-11 mt-4 bg-slate-900 text-white text-base">
+                  <Button type="submit" disabled={isProcessing} className="w-full h-11 mt-4 text-base">
                     {isProcessing ? 'Обробка...' : `Сплатити ${SINGLE_VISIT_PRICE}₴ та записатись`}
                   </Button>
                 </form>
@@ -630,11 +632,11 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
 
           {/* Step: Subscription Confirm */}
           {step === 'sub_confirm' && currentClient && (
-            <Card className="shadow-lg border-[#DDA343]/20">
-              <CardHeader className="pb-4 border-b border-gray-100 bg-[#DDA343]/5 rounded-t-xl">
-                <Button variant="ghost" className="w-fit p-0 h-auto mb-2 text-slate-500 hover:bg-transparent hover:text-slate-800" onClick={() => setStep('choose')}>← Назад до вибору</Button>
+            <Card className="shadow-lg border-brand-gold/20">
+              <CardHeader className="pb-4 border-b border-border/70 bg-brand-gold/5 rounded-t-xl">
+                <Button variant="ghost" className="w-fit p-0 h-auto mb-2 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => setStep('choose')}>← Назад до вибору</Button>
                 <CardTitle className="text-xl font-bold flex items-center gap-2">
-                  <Crown className="w-5 h-5 text-[#DDA343]" />
+                  <Crown className="w-5 h-5 text-brand-gold" />
                   Запис за абонементом
                 </CardTitle>
               </CardHeader>
@@ -645,22 +647,22 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
                   const remaining = sub.total_sessions - sub.used_sessions
                   return (
                     <>
-                      <div className="bg-gradient-to-br from-[#1B3A6B] to-[#0F2548] text-white rounded-xl p-5 space-y-3">
-                        <p className="text-sm font-semibold text-[#DDA343]">{sub.plan_name}</p>
+                      <div className="bg-gradient-to-br from-brand-navy to-brand-navy-dark text-white rounded-xl p-5 space-y-3">
+                        <p className="text-sm font-semibold text-brand-gold">{sub.plan_name}</p>
                         <div className="flex justify-between text-sm">
                           <span className="text-white/70">Залишилось візитів</span>
                           <span className="font-bold text-lg">{remaining}</span>
                         </div>
                         <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden">
-                          <div className="h-full bg-gradient-to-r from-[#DDA343] to-[#F0C75E] rounded-full" style={{ width: `${(sub.used_sessions / sub.total_sessions) * 100}%` }}/>
+                          <div className="h-full bg-gradient-to-r from-brand-gold to-brand-gold-light rounded-full" style={{ width: `${(sub.used_sessions / sub.total_sessions) * 100}%` }}/>
                         </div>
                         <p className="text-xs text-white/50">Дійсний до {format(new Date(sub.expires_at), 'dd.MM.yyyy')}</p>
                       </div>
-                      <div className="bg-slate-50 rounded-xl p-4 space-y-2">
-                        <p className="text-sm text-slate-600"><b>Клієнт:</b> {currentClient.name}</p>
-                        <p className="text-sm text-slate-600"><b>Email:</b> {currentClient.email}</p>
+                      <div className="bg-muted/70 rounded-xl p-4 space-y-2">
+                        <p className="text-sm text-muted-foreground"><b>Клієнт:</b> {currentClient.name}</p>
+                        <p className="text-sm text-muted-foreground"><b>Email:</b> {currentClient.email}</p>
                       </div>
-                      <Button onClick={handleBookWithSub} disabled={isProcessing} className="w-full h-11 bg-[#DDA343] hover:bg-[#C89338] text-white text-base font-bold">
+                      <Button onClick={handleBookWithSub} disabled={isProcessing} variant="brand" className="w-full h-11 text-base">
                         {isProcessing ? 'Записуємо...' : 'Підтвердити запис (абонемент)'}
                       </Button>
                     </>
@@ -673,31 +675,31 @@ function BookingPage({ lessons, setLessons, currentClient, setClients, plans, on
           {/* Step: Buy Plan */}
           {step === 'buy_plan' && currentClient && (
             <div className="space-y-4">
-              <Button variant="ghost" className="p-0 h-auto mb-1 text-slate-500 hover:bg-transparent hover:text-slate-800" onClick={() => setStep('choose')}>← Назад до вибору</Button>
+              <Button variant="ghost" className="p-0 h-auto mb-1 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => setStep('choose')}>← Назад до вибору</Button>
               <div>
-                <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2"><Award className="w-5 h-5 text-[#DDA343]" /> Оберіть абонемент</h2>
-                <p className="text-sm text-slate-500 mt-1">Абонемент дійсний 1 місяць з моменту покупки</p>
+                <h2 className="text-xl font-bold text-foreground flex items-center gap-2"><Award className="w-5 h-5 text-brand-gold" /> Оберіть абонемент</h2>
+                <p className="text-sm text-muted-foreground mt-1">Абонемент дійсний 1 місяць з моменту покупки</p>
               </div>
               <div className="grid gap-4">
                 {plans.map((plan, idx) => {
                   const perSession = Math.round(plan.price / plan.sessions)
                   const isBest = idx === plans.length - 1
                   return (
-                    <Card key={plan.id} className={cn("border-2 transition-all hover:shadow-md", isBest ? "border-[#DDA343]/50 bg-[#DDA343]/5" : "border-transparent hover:border-slate-300")}>
+                    <Card key={plan.id} className={cn("border-2 transition-all hover:shadow-md", isBest ? "border-brand-gold/50 bg-brand-gold/5" : "border-transparent hover:border-border")}>
                       <CardContent className="p-5 flex items-center gap-5">
-                        <div className={cn("w-12 h-12 rounded-xl flex items-center justify-center shrink-0", isBest ? "bg-[#DDA343] text-white" : "bg-slate-100 text-slate-600")}>
+                        <div className={cn("w-12 h-12 rounded-xl flex items-center justify-center shrink-0", isBest ? "bg-brand-gold text-brand-charcoal" : "bg-muted text-muted-foreground")}>
                           <Star className="w-6 h-6" />
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <h3 className="font-bold text-slate-900">{plan.name}</h3>
-                            {isBest && <Badge className="bg-[#DDA343] text-white border-0 text-[10px]">Найвигідніший</Badge>}
+                            <h3 className="font-bold text-foreground">{plan.name}</h3>
+                            {isBest && <Badge className="bg-brand-gold text-brand-charcoal border-0 text-[10px]">Найвигідніший</Badge>}
                           </div>
-                          <p className="text-sm text-slate-500">{plan.sessions} занять • {perSession}₴ за заняття • {plan.duration_days} днів</p>
+                          <p className="text-sm text-muted-foreground">{plan.sessions} занять • {perSession}₴ за заняття • {plan.duration_days} днів</p>
                         </div>
                         <div className="text-right shrink-0">
-                          <p className="text-xl font-black text-slate-900">{plan.price}₴</p>
-                          <Button size="sm" className={cn("mt-1", isBest ? "bg-[#DDA343] hover:bg-[#C89338] text-white" : "bg-slate-900 hover:bg-slate-800 text-white")} onClick={() => handleBuyPlan(plan)}>
+                          <p className="text-xl font-black text-foreground">{plan.price}₴</p>
+                          <Button size="sm" variant={isBest ? "brand" : "default"} className="mt-1" onClick={() => handleBuyPlan(plan)}>
                             Купити
                           </Button>
                         </div>
@@ -724,11 +726,11 @@ function CancelBookingPage({ lessons, setLessons }: { lessons: ActualLesson[], s
 
   if (!lesson && !isCancelled) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 text-center">
+      <div className="min-h-screen bg-background flex items-center justify-center p-4 text-center">
         <div>
-          <AlertTriangle className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-          <h2 className="text-xl font-bold text-slate-900 mb-2">Бронювання не знайдено</h2>
-          <p className="text-slate-500 mb-6">Можливо, воно вже було скасовано або посилання застаріло.</p>
+          <AlertTriangle className="w-12 h-12 text-muted-foreground/90 mx-auto mb-4" />
+          <h2 className="text-xl font-bold text-foreground mb-2">Бронювання не знайдено</h2>
+          <p className="text-muted-foreground mb-6">Можливо, воно вже було скасовано або посилання застаріло.</p>
           <Button onClick={() => navigate('/')}>На головну</Button>
         </div>
       </div>
@@ -755,11 +757,11 @@ function CancelBookingPage({ lessons, setLessons }: { lessons: ActualLesson[], s
 
   if (isCancelled) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 text-center">
+      <div className="min-h-screen bg-background flex items-center justify-center p-4 text-center">
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
            <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4"><X className="w-8 h-8" /></div>
-           <h2 className="text-2xl font-bold text-slate-900 mb-2">Запис успішно скасовано</h2>
-           <p className="text-slate-500 mb-6">Ваше місце звільнено.</p>
+           <h2 className="text-2xl font-bold text-foreground mb-2">Запис успішно скасовано</h2>
+           <p className="text-muted-foreground mb-6">Ваше місце звільнено.</p>
            <Button onClick={() => navigate('/')}>Повернутись до розкладу</Button>
         </motion.div>
       </div>
@@ -767,26 +769,26 @@ function CancelBookingPage({ lessons, setLessons }: { lessons: ActualLesson[], s
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-sm">
         <Card className="shadow-lg border-red-100">
-          <CardHeader className="text-center border-b border-slate-100 bg-white rounded-t-xl pb-6">
+          <CardHeader className="text-center border-b border-border/70 bg-muted/40 rounded-t-xl pb-6">
             <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto mb-4"><AlertTriangle className="w-6 h-6" /></div>
-            <CardTitle className="text-xl font-bold text-slate-900">Скасування запису</CardTitle>
-            <p className="text-sm text-slate-500 mt-2">Ви дійсно бажаєте скасувати свій запис?</p>
+            <CardTitle className="text-xl font-bold text-foreground">Скасування запису</CardTitle>
+            <p className="text-sm text-muted-foreground mt-2">Ви дійсно бажаєте скасувати свій запис?</p>
           </CardHeader>
-          <CardContent className="pt-6 bg-slate-50/50">
-            <div className="bg-white p-4 rounded-lg border border-slate-200 mb-6 space-y-2">
-              <p className="font-bold text-slate-900">{lesson?.class_name}</p>
-              <p className="text-sm text-slate-500">{lesson ? format(lesson.start_timestamp, 'd MMMM, HH:mm', {locale: uk}) : ''}</p>
-              <p className="text-sm text-slate-500">{lesson?.trainer_name}</p>
+          <CardContent className="pt-6 bg-muted/50">
+            <div className="bg-muted/40 p-4 rounded-lg border border-white/[0.08] mb-6 space-y-2">
+              <p className="font-bold text-foreground">{lesson?.class_name}</p>
+              <p className="text-sm text-muted-foreground">{lesson ? format(lesson.start_timestamp, 'd MMMM, HH:mm', {locale: uk}) : ''}</p>
+              <p className="text-sm text-muted-foreground">{lesson?.trainer_name}</p>
               <hr className="my-2" />
-              <p className="text-xs text-slate-400">Пошта: {lesson?.my_booking_email}</p>
+              <p className="text-xs text-muted-foreground/90">Пошта: {lesson?.my_booking_email}</p>
             </div>
             <Button variant="destructive" className="w-full h-11 text-base font-semibold" disabled={isProcessing} onClick={handleCancelClick}>
               {isProcessing ? 'Скасування...' : 'Так, скасувати запис'}
             </Button>
-            <Button variant="ghost" className="w-full mt-2 text-slate-500" disabled={isProcessing} onClick={() => navigate('/')}>Повернутись</Button>
+            <Button variant="ghost" className="w-full mt-2 text-muted-foreground" disabled={isProcessing} onClick={() => navigate('/')}>Повернутись</Button>
           </CardContent>
         </Card>
       </motion.div>
@@ -861,28 +863,29 @@ function AuthPage({ clients, setClients, setCurrentClientId }: {
   }
 
   return (
-    <div className="min-h-screen bg-[#f9f9fb] flex items-center justify-center p-4">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md">
         <div className="text-center mb-8">
-          <img src={logoImg} alt="Brave! Yoga" className="w-20 h-20 rounded-full mx-auto shadow-lg mb-4" />
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center justify-center gap-2">
-            <span className="italic font-serif text-[#DDA343]">Brave!</span> <span className="text-slate-700">Yoga</span>
+          <img src={logoImg} alt="Brave! Yoga" className="w-20 h-20 rounded-full mx-auto shadow-lg mb-4 ring-4 ring-brand-gold/25" />
+          <h1 className="flex flex-col items-center gap-1">
+            <span className="font-brand-script text-4xl text-brand-gold">Brave!</span>
+            <span className="font-brand-sans text-[0.7rem] text-foreground/80 tracking-[0.28em]">Yoga</span>
           </h1>
-          <p className="text-sm text-slate-500 mt-1">Студія твого балансу</p>
+          <p className="text-sm text-muted-foreground mt-2">Студія твого балансу</p>
         </div>
 
-        <Card className="shadow-xl border-gray-200">
+        <Card className="shadow-xl border-brand-gold/20 ring-1 ring-brand-navy/5 overflow-hidden">
           {/* Tabs */}
-          <div className="flex border-b border-gray-200">
+          <div className="flex border-b border-border/80 bg-brand-navy/5">
             <button
               onClick={() => { setTab('login'); setError('') }}
-              className={cn("flex-1 py-3.5 text-sm font-semibold transition-colors", tab === 'login' ? "text-[#DDA343] border-b-2 border-[#DDA343] bg-[#DDA343]/5" : "text-slate-400 hover:text-slate-600")}
+              className={cn("flex-1 py-3.5 text-sm font-semibold transition-colors", tab === 'login' ? "text-brand-gold border-b-2 border-brand-gold bg-brand-gold/5" : "text-muted-foreground/90 hover:text-muted-foreground")}
             >
               Увійти
             </button>
             <button
               onClick={() => { setTab('register'); setError('') }}
-              className={cn("flex-1 py-3.5 text-sm font-semibold transition-colors", tab === 'register' ? "text-[#DDA343] border-b-2 border-[#DDA343] bg-[#DDA343]/5" : "text-slate-400 hover:text-slate-600")}
+              className={cn("flex-1 py-3.5 text-sm font-semibold transition-colors", tab === 'register' ? "text-brand-gold border-b-2 border-brand-gold bg-brand-gold/5" : "text-muted-foreground/90 hover:text-muted-foreground")}
             >
               Реєстрація
             </button>
@@ -890,7 +893,7 @@ function AuthPage({ clients, setClients, setCurrentClientId }: {
 
           <CardContent className="pt-6 pb-8">
             {error && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-100 rounded-lg text-sm text-red-700 flex items-center gap-2">
+              <div className="mb-4 p-3 bg-red-950/40 border border-red-500/25 rounded-lg text-sm text-red-200 flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
               </div>
             )}
@@ -898,46 +901,46 @@ function AuthPage({ clients, setClients, setCurrentClientId }: {
             {tab === 'login' ? (
               <form onSubmit={handleLogin} className="space-y-4">
                 <div>
-                  <label className="text-sm font-medium text-slate-700 mb-1 flex items-center gap-1.5"><Mail className="w-3.5 h-3.5" /> Email</label>
+                  <label className="text-sm font-medium text-foreground/90 mb-1 flex items-center gap-1.5"><Mail className="w-3.5 h-3.5" /> Email</label>
                   <input required type="email" placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)} className={inputClasses} />
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-slate-700 mb-1 flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" /> Пароль</label>
+                  <label className="text-sm font-medium text-foreground/90 mb-1 flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" /> Пароль</label>
                   <div className="relative">
                     <input required type={showPass ? 'text' : 'password'} placeholder="Ваш пароль" value={password} onChange={e=>setPassword(e.target.value)} className={inputClasses} />
-                    <button type="button" onClick={()=>setShowPass(!showPass)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                    <button type="button" onClick={()=>setShowPass(!showPass)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/90 hover:text-muted-foreground">
                       {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
                 </div>
-                <Button type="submit" disabled={loading} className="w-full h-11 bg-[#DDA343] hover:bg-[#C89338] text-white text-base font-bold">
+                <Button type="submit" disabled={loading} variant="brand" className="w-full h-11 text-base">
                   {loading ? 'Завантаження...' : 'Увійти'}
                 </Button>
               </form>
             ) : (
               <form onSubmit={handleRegister} className="space-y-4">
                 <div>
-                  <label className="text-sm font-medium text-slate-700 mb-1 flex items-center gap-1.5"><User className="w-3.5 h-3.5" /> Ваше ім'я</label>
+                  <label className="text-sm font-medium text-foreground/90 mb-1 flex items-center gap-1.5"><User className="w-3.5 h-3.5" /> Ваше ім'я</label>
                   <input required placeholder="Іван Іванов" value={name} onChange={e=>setName(e.target.value)} className={inputClasses} />
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-slate-700 mb-1 flex items-center gap-1.5"><Mail className="w-3.5 h-3.5" /> Email</label>
+                  <label className="text-sm font-medium text-foreground/90 mb-1 flex items-center gap-1.5"><Mail className="w-3.5 h-3.5" /> Email</label>
                   <input required type="email" placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)} className={inputClasses} />
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-slate-700 mb-1 flex items-center gap-1.5"><Phone className="w-3.5 h-3.5" /> Телефон</label>
+                  <label className="text-sm font-medium text-foreground/90 mb-1 flex items-center gap-1.5"><Phone className="w-3.5 h-3.5" /> Телефон</label>
                   <input required type="tel" placeholder="+380 99 000 00 00" value={phone} onChange={e=>setPhone(e.target.value)} className={inputClasses} />
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-slate-700 mb-1 flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" /> Пароль</label>
+                  <label className="text-sm font-medium text-foreground/90 mb-1 flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" /> Пароль</label>
                   <div className="relative">
                     <input required type={showPass ? 'text' : 'password'} placeholder="Придумайте пароль" value={password} onChange={e=>setPassword(e.target.value)} className={inputClasses} minLength={4} />
-                    <button type="button" onClick={()=>setShowPass(!showPass)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                    <button type="button" onClick={()=>setShowPass(!showPass)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/90 hover:text-muted-foreground">
                       {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
                 </div>
-                <Button type="submit" disabled={loading} className="w-full h-11 bg-[#DDA343] hover:bg-[#C89338] text-white text-base font-bold">
+                <Button type="submit" disabled={loading} variant="brand" className="w-full h-11 text-base">
                   {loading ? 'Реєстрація...' : 'Зареєструватись'}
                 </Button>
               </form>
@@ -946,7 +949,7 @@ function AuthPage({ clients, setClients, setCurrentClientId }: {
         </Card>
 
         <div className="text-center mt-6">
-          <Button variant="link" onClick={() => navigate('/')} className="text-slate-400 text-sm">
+          <Button variant="link" onClick={() => navigate('/')} className="text-muted-foreground/90 text-sm">
             ← На головну
           </Button>
         </div>
@@ -972,12 +975,12 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans,
 
   if (!currentClient) {
     return (
-      <div className="min-h-screen bg-[#f9f9fb] flex items-center justify-center p-4">
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <div className="text-center">
           <img src={logoImg} alt="" className="w-16 h-16 rounded-full mx-auto mb-4" />
           <h2 className="text-xl font-bold mb-2">Увійдіть до свого акаунту</h2>
-          <p className="text-slate-500 mb-6">Щоб бачити свій абонемент та дані</p>
-          <Button onClick={() => navigate('/auth?redirect=/dashboard')} className="bg-[#DDA343] hover:bg-[#C89338] text-white">Увійти</Button>
+          <p className="text-muted-foreground mb-6">Щоб бачити свій абонемент та дані</p>
+          <Button onClick={() => navigate('/auth?redirect=/dashboard')} variant="brand">Увійти</Button>
         </div>
       </div>
     )
@@ -1033,18 +1036,18 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans,
   }
 
   return (
-    <div className="min-h-screen bg-[#f9f9fb] font-sans text-foreground">
+    <div className="min-h-screen bg-background font-sans text-foreground">
       <Header role="CLIENT" currentClient={currentClient} onClientLogout={onClientLogout} />
       <main className="container px-4 sm:px-8 pt-8 pb-24 max-w-4xl mx-auto">
         {/* Profile Header */}
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
           <div className="flex items-center gap-4 mb-2">
-            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-[#DDA343] to-[#F0C75E] text-white flex items-center justify-center text-xl font-bold shadow-lg">
+            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-brand-gold to-brand-gold-light text-brand-charcoal flex items-center justify-center text-xl font-bold shadow-lg ring-2 ring-brand-gold/40">
               {currentClient.name.charAt(0).toUpperCase()}
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">{currentClient.name}</h1>
-              <p className="text-sm text-slate-500">{currentClient.email} • {currentClient.phone}</p>
+              <h1 className="text-2xl font-bold text-foreground">{currentClient.name}</h1>
+              <p className="text-sm text-muted-foreground">{currentClient.email} • {currentClient.phone}</p>
             </div>
           </div>
         </motion.div>
@@ -1055,19 +1058,19 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans,
             {activeSub ? (
               <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
                 <Card className="overflow-hidden border-0 shadow-lg">
-                  <div className="bg-gradient-to-br from-[#1B3A6B] to-[#0F2548] text-white p-6 space-y-4">
+                  <div className="bg-gradient-to-br from-brand-navy to-brand-navy-dark text-white p-6 space-y-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <Crown className="w-5 h-5 text-[#DDA343]" />
-                        <span className="text-sm font-bold text-[#DDA343] uppercase tracking-wider">Активний абонемент</span>
+                        <Crown className="w-5 h-5 text-brand-gold" />
+                        <span className="text-sm font-bold text-brand-gold uppercase tracking-wider">Активний абонемент</span>
                       </div>
-                      <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30 text-[10px]">Активний</Badge>
+                      <Badge className="bg-brand-gold/25 text-brand-gold-light border-brand-gold/40 text-[10px]">Активний</Badge>
                     </div>
                     <h2 className="text-xl font-bold">{activeSub.plan_name}</h2>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="bg-white/10 rounded-xl p-4 text-center">
-                        <p className="text-3xl font-black text-[#DDA343]">{activeSub.used_sessions}</p>
+                        <p className="text-3xl font-black text-brand-gold">{activeSub.used_sessions}</p>
                         <p className="text-xs text-white/60 mt-1">Відвідано</p>
                       </div>
                       <div className="bg-white/10 rounded-xl p-4 text-center">
@@ -1086,7 +1089,7 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans,
                           initial={{ width: 0 }}
                           animate={{ width: `${(activeSub.used_sessions / activeSub.total_sessions) * 100}%` }}
                           transition={{ duration: 0.8, ease: 'easeOut' }}
-                          className="h-full bg-gradient-to-r from-[#DDA343] to-[#F0C75E] rounded-full"
+                          className="h-full bg-gradient-to-r from-brand-gold to-brand-gold-light rounded-full"
                         />
                       </div>
                     </div>
@@ -1109,16 +1112,16 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans,
                 </Card>
               </motion.div>
             ) : (
-              <Card className="border-dashed border-2 border-[#DDA343]/30 bg-[#DDA343]/5">
+              <Card className="border-dashed border-2 border-brand-gold/30 bg-brand-gold/5">
                 <CardContent className="p-8 text-center space-y-4">
-                  <div className="w-16 h-16 bg-[#DDA343]/10 text-[#DDA343] rounded-full flex items-center justify-center mx-auto">
+                  <div className="w-16 h-16 bg-brand-gold/10 text-brand-gold rounded-full flex items-center justify-center mx-auto">
                     <Crown className="w-8 h-8" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-slate-900">У вас немає активного абонементу</h3>
-                    <p className="text-sm text-slate-500 mt-1">Придбайте абонемент та економте на кожному занятті!</p>
+                    <h3 className="text-lg font-bold text-foreground">У вас немає активного абонементу</h3>
+                    <p className="text-sm text-muted-foreground mt-1">Придбайте абонемент та економте на кожному занятті!</p>
                   </div>
-                  <Button onClick={() => setShowBuyPlans(true)} className="bg-[#DDA343] hover:bg-[#C89338] text-white">
+                  <Button onClick={() => setShowBuyPlans(true)} variant="brand">
                     <CreditCard className="w-4 h-4 mr-2" /> Придбати абонемент
                   </Button>
                 </CardContent>
@@ -1126,27 +1129,27 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans,
             )}
 
             {/* Booking History */}
-            <Card className="border-gray-200">
-              <CardHeader className="border-b border-gray-100">
-                <CardTitle className="text-base font-bold flex items-center gap-2"><CalendarIcon className="w-4 h-4 text-slate-400" /> Історія відвідувань</CardTitle>
+            <Card className="border-border">
+              <CardHeader className="border-b border-border/70">
+                <CardTitle className="text-base font-bold flex items-center gap-2"><CalendarIcon className="w-4 h-4 text-muted-foreground/90" /> Історія відвідувань</CardTitle>
               </CardHeader>
               <CardContent className="pt-4">
                 {currentClient.bookings.length > 0 ? (
                   <div className="space-y-2">
                     {[...currentClient.bookings].reverse().map((b, idx) => (
-                      <div key={idx} className="flex items-center gap-3 p-3 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors">
-                        <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                      <div key={idx} className="flex items-center gap-3 p-3 rounded-lg bg-muted/70 hover:bg-muted transition-colors">
+                        <div className="w-8 h-8 rounded-lg bg-brand-gold/25 text-brand-charcoal flex items-center justify-center shrink-0">
                           <Check className="w-4 h-4" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-slate-900">{b.className}</p>
-                          <p className="text-xs text-slate-500">{b.trainerName} • {format(new Date(b.date), 'dd.MM.yyyy, HH:mm')}</p>
+                          <p className="text-sm font-semibold text-foreground">{b.className}</p>
+                          <p className="text-xs text-muted-foreground">{b.trainerName} • {format(new Date(b.date), 'dd.MM.yyyy, HH:mm')}</p>
                         </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <p className="text-sm text-slate-400 text-center py-6">Поки немає записів. Забронюйте перше заняття!</p>
+                  <p className="text-sm text-muted-foreground/90 text-center py-6">Поки немає записів. Забронюйте перше заняття!</p>
                 )}
               </CardContent>
             </Card>
@@ -1157,11 +1160,11 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans,
             {/* Quick Actions */}
             <Card>
               <CardContent className="p-4 space-y-3">
-                <Button className="w-full bg-slate-900 hover:bg-slate-800 text-white" onClick={() => navigate('/')}>
+                <Button className="w-full" onClick={() => navigate('/')}>
                   <CalendarIcon className="w-4 h-4 mr-2" /> Переглянути розклад
                 </Button>
                 {activeSub && (
-                  <Button variant="outline" className="w-full border-[#DDA343]/30 text-[#DDA343] hover:bg-[#DDA343]/10" onClick={() => setShowBuyPlans(true)}>
+                  <Button variant="outline" className="w-full border-brand-gold/30 text-brand-gold hover:bg-brand-gold/10" onClick={() => setShowBuyPlans(true)}>
                     <Plus className="w-4 h-4 mr-2" /> Ще абонемент
                   </Button>
                 )}
@@ -1171,8 +1174,8 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans,
             {/* Subscription History */}
             {allSubs.length > 0 && (
               <Card>
-                <CardHeader className="pb-2 border-b border-gray-100">
-                  <CardTitle className="text-sm font-semibold text-slate-600 uppercase tracking-wider">Усі абонементи</CardTitle>
+                <CardHeader className="pb-2 border-b border-border/70">
+                  <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Усі абонементи</CardTitle>
                 </CardHeader>
                 <CardContent className="pt-3 space-y-2">
                   {allSubs.map((s, idx) => {
@@ -1180,14 +1183,14 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans,
                     const isUsedUp = s.used_sessions >= s.total_sessions
                     const isActive = !isExpired && !isUsedUp
                     return (
-                      <div key={idx} className={cn("p-3 rounded-lg border text-xs", isActive ? "border-emerald-200 bg-emerald-50/50" : "border-slate-200 bg-slate-50 opacity-60")}>
-                        <p className="font-bold text-slate-900">{s.plan_name}</p>
-                        <p className="text-slate-500 mt-1">{s.used_sessions}/{s.total_sessions} візитів</p>
+                      <div key={idx} className={cn("p-3 rounded-lg border text-xs", isActive ? "border-brand-gold/40 bg-brand-gold/10" : "border-border bg-muted/70 opacity-60")}>
+                        <p className="font-bold text-foreground">{s.plan_name}</p>
+                        <p className="text-muted-foreground mt-1">{s.used_sessions}/{s.total_sessions} візитів</p>
                         <div className="flex justify-between mt-1">
-                          <span className="text-slate-400">{format(new Date(s.purchased_at), 'dd.MM')}-{format(new Date(s.expires_at), 'dd.MM.yy')}</span>
-                          {isActive && <Badge className="bg-emerald-500 text-white border-0 text-[8px] px-1.5">Активний</Badge>}
-                          {isExpired && <Badge variant="outline" className="text-[8px] px-1.5 text-slate-400">Прострочений</Badge>}
-                          {isUsedUp && !isExpired && <Badge variant="outline" className="text-[8px] px-1.5 text-slate-400">Використаний</Badge>}
+                          <span className="text-muted-foreground/90">{format(new Date(s.purchased_at), 'dd.MM')}-{format(new Date(s.expires_at), 'dd.MM.yy')}</span>
+                          {isActive && <Badge className="bg-brand-gold text-brand-charcoal border-0 text-[8px] px-1.5">Активний</Badge>}
+                          {isExpired && <Badge variant="outline" className="text-[8px] px-1.5 text-muted-foreground/90">Прострочений</Badge>}
+                          {isUsedUp && !isExpired && <Badge variant="outline" className="text-[8px] px-1.5 text-muted-foreground/90">Використаний</Badge>}
                         </div>
                       </div>
                     )
@@ -1197,14 +1200,14 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans,
             )}
 
             {/* Promo Code Activation */}
-            <Card className="border-emerald-200">
-              <CardHeader className="pb-2 border-b border-emerald-100">
-                <CardTitle className="text-sm font-semibold text-emerald-700 flex items-center gap-2">
+            <Card className="border-brand-gold/30">
+              <CardHeader className="pb-2 border-b border-brand-gold/20">
+                <CardTitle className="text-sm font-semibold text-foreground flex items-center gap-2">
                   <Ticket className="w-4 h-4" /> Активувати подарунок
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-3 space-y-2">
-                <p className="text-xs text-slate-500">Якщо вам подарували промо-код, введіть його нижче:</p>
+                <p className="text-xs text-muted-foreground">Якщо вам подарували промо-код, введіть його нижче:</p>
                 <input
                   value={promoInput}
                   onChange={e => { setPromoInput(e.target.value.toUpperCase()); setPromoError(null); setPromoSuccess(null) }}
@@ -1212,11 +1215,12 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans,
                   className={inputClasses + ' font-mono text-sm tracking-widest'}
                 />
                 {promoError && <p className="text-xs text-red-500">{promoError}</p>}
-                {promoSuccess && <p className="text-xs text-emerald-600 font-semibold">✓ {promoSuccess}</p>}
+                {promoSuccess && <p className="text-xs text-foreground font-semibold">✓ {promoSuccess}</p>}
                 <Button
                   onClick={handleActivatePromo}
                   disabled={!promoInput.trim()}
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm"
+                  variant="brand"
+                  className="w-full text-sm"
                 >
                   <Check className="w-4 h-4 mr-1" /> Активувати
                 </Button>
@@ -1230,26 +1234,26 @@ function ClientDashboardPage({ currentClient, setClients, onClientLogout, plans,
       <Dialog open={showBuyPlans} onOpenChange={setShowBuyPlans}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-xl"><Award className="w-5 h-5 text-[#DDA343]" /> Придбати абонемент</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 text-xl"><Award className="w-5 h-5 text-brand-gold" /> Придбати абонемент</DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
-            <p className="text-sm text-slate-500">Абонемент дійсний 1 місяць з моменту покупки</p>
+            <p className="text-sm text-muted-foreground">Абонемент дійсний 1 місяць з моменту покупки</p>
             {plans.map((plan, idx) => {
               const perSession = Math.round(plan.price / plan.sessions)
               const isBest = idx === plans.length - 1
               return (
-                <div key={plan.id} className={cn("p-4 rounded-xl border-2 flex items-center gap-4 transition-all hover:shadow-md cursor-pointer", isBest ? "border-[#DDA343]/50 bg-[#DDA343]/5" : "border-slate-200 hover:border-slate-300")} onClick={() => handleBuyPlan(plan)}>
-                  <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0", isBest ? "bg-[#DDA343] text-white" : "bg-slate-100 text-slate-600")}>
+                <div key={plan.id} className={cn("p-4 rounded-xl border-2 flex items-center gap-4 transition-all hover:shadow-md cursor-pointer", isBest ? "border-brand-gold/50 bg-brand-gold/5" : "border-border hover:border-border")} onClick={() => handleBuyPlan(plan)}>
+                  <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0", isBest ? "bg-brand-gold text-brand-charcoal" : "bg-muted text-muted-foreground")}>
                     <Star className="w-5 h-5" />
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-900">{plan.name}</span>
-                      {isBest && <Badge className="bg-[#DDA343] text-white border-0 text-[9px]">Хіт</Badge>}
+                      <span className="font-bold text-foreground">{plan.name}</span>
+                      {isBest && <Badge className="bg-brand-gold text-brand-charcoal border-0 text-[9px]">Хіт</Badge>}
                     </div>
-                    <p className="text-xs text-slate-500">{plan.sessions} занять • {perSession}₴/заняття</p>
+                    <p className="text-xs text-muted-foreground">{plan.sessions} занять • {perSession}₴/заняття</p>
                   </div>
-                  <span className="text-lg font-black text-slate-900">{plan.price}₴</span>
+                  <span className="text-lg font-black text-foreground">{plan.price}₴</span>
                 </div>
               )
             })}
@@ -1267,7 +1271,7 @@ function AdminLayout({ isAdminLogged, setIsAdminLogged }: { isAdminLogged: boole
 
   if (!isAdminLogged) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
         <Card className="w-full max-w-sm">
           <CardHeader>
             <img src={logoImg} alt="Brave! Yoga" className="w-16 h-16 rounded-full mx-auto mb-2 shadow-lg" />
@@ -1276,8 +1280,8 @@ function AdminLayout({ isAdminLogged, setIsAdminLogged }: { isAdminLogged: boole
           <CardContent>
             <form onSubmit={e => { e.preventDefault(); if(password==='admin123') setIsAdminLogged(true); else alert('Невірний пароль!') }}>
               <input type="password" required placeholder="Пароль" value={password} onChange={e=>setPassword(e.target.value)} className={inputClasses} />
-              <Button type="submit" className="w-full mt-4 bg-purple-600 hover:bg-purple-700 text-white">Увійти</Button>
-              <Button type="button" variant="link" onClick={()=>navigate('/')} className="w-full mt-2 text-slate-400">На головну</Button>
+              <Button type="submit" variant="brand" className="w-full mt-4">Увійти</Button>
+              <Button type="button" variant="link" onClick={()=>navigate('/')} className="w-full mt-2 text-muted-foreground/90">На головну</Button>
             </form>
           </CardContent>
         </Card>
@@ -1286,7 +1290,7 @@ function AdminLayout({ isAdminLogged, setIsAdminLogged }: { isAdminLogged: boole
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="min-h-screen bg-background flex flex-col">
       <Header role="ADMIN" onLogout={() => setIsAdminLogged(false)} />
       <main className="flex-1">
         <Outlet />
@@ -1301,41 +1305,42 @@ function AdminHub() {
 
   return (
     <div className="container p-4 sm:p-12 flex flex-col items-center justify-center mt-10">
-      <img src={logoImg} alt="" className="w-16 h-16 rounded-full shadow-lg mb-4" />
-      <h1 className="text-3xl font-bold mb-8 text-slate-800">Меню Адміністратора</h1>
+      <img src={logoImg} alt="" className="w-16 h-16 rounded-full shadow-lg mb-4 ring-2 ring-brand-gold/30" />
+      <h1 className="text-3xl font-bold mb-2 text-foreground tracking-tight">Меню Адміністратора</h1>
+      <p className="text-sm text-muted-foreground mb-8">Brave! Yoga — внутрішня панель</p>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl">
-        <Card className="cursor-pointer hover:border-purple-300 hover:shadow-md transition-all group" onClick={() => navigate('/admin/schedule')}>
+        <Card className="cursor-pointer hover:border-brand-gold/40 hover:shadow-lg transition-all group border-border/80" onClick={() => navigate('/admin/schedule')}>
           <CardContent className="flex flex-col items-center p-10 text-center gap-4">
-             <div className="w-20 h-20 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+             <div className="w-20 h-20 rounded-2xl bg-secondary text-brand-gold flex items-center justify-center group-hover:scale-110 transition-transform ring-1 ring-brand-gold/25">
                <CalendarIcon className="w-10 h-10" />
              </div>
              <div>
                <h2 className="text-xl font-bold">Розклад занять</h2>
-               <p className="text-sm text-slate-500 mt-2">Редагування тижневого графіку, скасування занять, генерація фото для соцмереж.</p>
+               <p className="text-sm text-muted-foreground mt-2">Редагування тижневого графіку, скасування занять, генерація фото для соцмереж.</p>
              </div>
           </CardContent>
         </Card>
 
-        <Card className="cursor-pointer hover:border-blue-300 hover:shadow-md transition-all group" onClick={() => navigate('/admin/settings')}>
+        <Card className="cursor-pointer hover:border-brand-gold/40 hover:shadow-lg transition-all group border-border/80" onClick={() => navigate('/admin/settings')}>
           <CardContent className="flex flex-col items-center p-10 text-center gap-4">
-             <div className="w-20 h-20 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+             <div className="w-20 h-20 rounded-2xl bg-brand-gold/15 text-brand-gold-hover flex items-center justify-center group-hover:scale-110 transition-transform ring-1 ring-brand-gold/25">
                <Database className="w-10 h-10" />
              </div>
              <div>
                <h2 className="text-xl font-bold">База Даних</h2>
-               <p className="text-sm text-slate-500 mt-2">Тренери, формати занять та управління абонементами.</p>
+               <p className="text-sm text-muted-foreground mt-2">Тренери, формати занять та управління абонементами.</p>
              </div>
           </CardContent>
         </Card>
 
-        <Card className="cursor-pointer hover:border-emerald-300 hover:shadow-md transition-all group" onClick={() => navigate('/admin/stats')}>
+        <Card className="cursor-pointer hover:border-brand-gold/40 hover:shadow-lg transition-all group border-border/80" onClick={() => navigate('/admin/stats')}>
           <CardContent className="flex flex-col items-center p-10 text-center gap-4">
-             <div className="w-20 h-20 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+             <div className="w-20 h-20 rounded-2xl bg-primary/25 text-brand-gold flex items-center justify-center group-hover:scale-110 transition-transform ring-1 ring-brand-gold/25">
                <BarChart3 className="w-10 h-10" />
              </div>
              <div>
                <h2 className="text-xl font-bold">Статистика</h2>
-               <p className="text-sm text-slate-500 mt-2">Зарплати тренерів, доходи адміна та детальна аналітика.</p>
+               <p className="text-sm text-muted-foreground mt-2">Зарплати тренерів, доходи адміна та детальна аналітика.</p>
              </div>
           </CardContent>
         </Card>
@@ -1423,59 +1428,59 @@ function AdminSettingsPage({ trainers, setTrainers, classTypes, setClassTypes, p
   return (
     <div className="container p-4 sm:p-8 max-w-6xl mx-auto">
       <Button variant="ghost" onClick={() => navigate('/admin')} className="mb-4">← Назад у меню</Button>
-      <h1 className="text-2xl font-bold mb-6 flex items-center gap-2"><Settings className="w-6 h-6 text-blue-600" /> Налаштування Бази</h1>
+      <h1 className="text-2xl font-bold mb-6 flex items-center gap-2 text-foreground"><Settings className="w-6 h-6 text-brand-gold" /> Налаштування Бази</h1>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {/* Trainers Panel */}
         <Card>
-          <CardHeader className="bg-blue-50/50 pb-4 border-b mb-4">
-            <CardTitle>Список Тренерів</CardTitle>
+          <CardHeader className="bg-brand-navy/5 pb-4 border-b border-border/60 mb-4">
+            <CardTitle className="text-foreground">Список Тренерів</CardTitle>
             <CardDescription>Ці тренери будуть доступні у вигляді випадаючого списку при створенні графіка.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             <form onSubmit={handleAddTrainer} className="flex gap-2">
                <input required placeholder="Ім'я тренера" value={newTrainer} onChange={e=>setNewTrainer(e.target.value)} className={inputClasses} />
-               <Button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white shrink-0"><Plus className="w-4 h-4 mr-1"/> Додати</Button>
+               <Button type="submit" className="shrink-0"><Plus className="w-4 h-4 mr-1"/> Додати</Button>
             </form>
             <div className="space-y-2">
               {trainers.map((t, idx) => (
-                <div key={idx} className="flex items-center justify-between p-3 border border-slate-200 rounded-lg hover:bg-slate-50">
-                  <span className="font-semibold text-slate-700">{t}</span>
+                <div key={idx} className="flex items-center justify-between p-3 border border-border rounded-lg hover:bg-muted/70">
+                  <span className="font-semibold text-foreground/90">{t}</span>
                   <button onClick={() => { if(confirm('Видалити?')) setTrainers(p => p.filter(x => x !== t)) }} className="text-red-500 hover:text-white hover:bg-red-500 px-2 py-1 rounded text-xs transition-colors">Видалити</button>
                 </div>
               ))}
-              {trainers.length === 0 && <p className="text-sm text-slate-400 italic">Додайте тренерів.</p>}
+              {trainers.length === 0 && <p className="text-sm text-muted-foreground/90 italic">Додайте тренерів.</p>}
             </div>
           </CardContent>
         </Card>
 
         {/* Classes Panel */}
         <Card>
-          <CardHeader className="bg-purple-50/50 pb-4 border-b mb-4">
-            <CardTitle>Типи Занять</CardTitle>
+          <CardHeader className="bg-brand-gold/10 pb-4 border-b border-border/60 mb-4">
+            <CardTitle className="text-foreground">Типи Занять</CardTitle>
             <CardDescription>Вкажіть назви занять, які проходять у вашому спортзалі.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             <form onSubmit={handleAddClass} className="flex gap-2">
                <input required placeholder="Назва заняття" value={newClass} onChange={e=>setNewClass(e.target.value)} className={inputClasses} />
-               <Button type="submit" className="bg-purple-600 hover:bg-purple-700 text-white shrink-0"><Plus className="w-4 h-4 mr-1"/> Додати</Button>
+               <Button type="submit" variant="brand" className="shrink-0"><Plus className="w-4 h-4 mr-1"/> Додати</Button>
             </form>
             <div className="space-y-2">
               {classTypes.map((c, idx) => (
-                <div key={idx} className="flex items-center justify-between p-3 border border-slate-200 rounded-lg hover:bg-slate-50">
-                  <span className="font-semibold text-slate-700">{c}</span>
+                <div key={idx} className="flex items-center justify-between p-3 border border-border rounded-lg hover:bg-muted/70">
+                  <span className="font-semibold text-foreground/90">{c}</span>
                   <button onClick={() => { if(confirm('Видалити?')) setClassTypes(p => p.filter(x => x !== c)) }} className="text-red-500 hover:text-white hover:bg-red-500 px-2 py-1 rounded text-xs transition-colors">Видалити</button>
                 </div>
               ))}
-              {classTypes.length === 0 && <p className="text-sm text-slate-400 italic">Жодного заняття не збережено.</p>}
+              {classTypes.length === 0 && <p className="text-sm text-muted-foreground/90 italic">Жодного заняття не збережено.</p>}
             </div>
           </CardContent>
         </Card>
 
         {/* Subscription Plans Panel */}
         <Card>
-          <CardHeader className="bg-[#DDA343]/10 pb-4 border-b mb-4">
-            <CardTitle className="flex items-center gap-2"><Crown className="w-5 h-5 text-[#DDA343]" /> Абонементи</CardTitle>
+          <CardHeader className="bg-brand-gold/10 pb-4 border-b mb-4">
+            <CardTitle className="flex items-center gap-2"><Crown className="w-5 h-5 text-brand-gold" /> Абонементи</CardTitle>
             <CardDescription>Створюйте та редагуйте плани абонементів для клієнтів.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -1483,46 +1488,46 @@ function AdminSettingsPage({ trainers, setTrainers, classTypes, setClassTypes, p
               <input required placeholder="Назва (напр. Абонемент на 10 занять)" value={newPlanName} onChange={e=>setNewPlanName(e.target.value)} className={inputClasses} />
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="text-[10px] text-slate-400 uppercase font-bold">Занять</label>
+                  <label className="text-[10px] text-muted-foreground/90 uppercase font-bold">Занять</label>
                   <input required type="number" min="1" placeholder="К-сть" value={newPlanSessions} onChange={e=>setNewPlanSessions(e.target.value)} className={inputClasses} />
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-400 uppercase font-bold">Ціна (₴)</label>
+                  <label className="text-[10px] text-muted-foreground/90 uppercase font-bold">Ціна (₴)</label>
                   <input required type="number" min="1" placeholder="Ціна" value={newPlanPrice} onChange={e=>setNewPlanPrice(e.target.value)} className={inputClasses} />
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-400 uppercase font-bold">Днів</label>
+                  <label className="text-[10px] text-muted-foreground/90 uppercase font-bold">Днів</label>
                   <input required type="number" min="1" placeholder="30" value={newPlanDays} onChange={e=>setNewPlanDays(e.target.value)} className={inputClasses} />
                 </div>
               </div>
-              <Button type="submit" className="w-full bg-[#DDA343] hover:bg-[#C89338] text-white"><Plus className="w-4 h-4 mr-1"/> Створити абонемент</Button>
+              <Button type="submit" variant="brand" className="w-full"><Plus className="w-4 h-4 mr-1"/> Створити абонемент</Button>
             </form>
             <div className="space-y-2">
               {plans.map(plan => (
-                <div key={plan.id} className="p-3 border border-slate-200 rounded-lg hover:bg-slate-50 space-y-1">
+                <div key={plan.id} className="p-3 border border-border rounded-lg hover:bg-muted/70 space-y-1">
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold text-slate-700 text-sm">{plan.name}</span>
+                    <span className="font-semibold text-foreground/90 text-sm">{plan.name}</span>
                     <button onClick={() => { if(confirm('Видалити план?')) setPlans(p => p.filter(x => x.id !== plan.id)) }} className="text-red-500 hover:text-white hover:bg-red-500 px-2 py-1 rounded text-xs transition-colors">Видалити</button>
                   </div>
-                  <p className="text-xs text-slate-400">{plan.sessions} занять • {plan.price}₴ • {plan.duration_days} днів</p>
+                  <p className="text-xs text-muted-foreground/90">{plan.sessions} занять • {plan.price}₴ • {plan.duration_days} днів</p>
                 </div>
               ))}
-              {plans.length === 0 && <p className="text-sm text-slate-400 italic">Жодного абонементу. Створіть перший!</p>}
+              {plans.length === 0 && <p className="text-sm text-muted-foreground/90 italic">Жодного абонементу. Створіть перший!</p>}
             </div>
           </CardContent>
         </Card>
 
         {/* Promo Codes Panel */}
         <Card className="md:col-span-1 lg:col-span-3">
-          <CardHeader className="bg-emerald-50/50 pb-4 border-b mb-4">
-            <CardTitle className="flex items-center gap-2"><Ticket className="w-5 h-5 text-emerald-600" /> Промо-коди (Подарунки)</CardTitle>
+          <CardHeader className="bg-brand-navy/5 pb-4 border-b border-border/60 mb-4">
+            <CardTitle className="flex items-center gap-2 text-foreground"><Ticket className="w-5 h-5 text-brand-gold" /> Промо-коди (Подарунки)</CardTitle>
             <CardDescription>Генеруйте унікальні коди абонементів для друзів або в подарунок. Клієнт вводить код в особистому кабінеті.</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Generator */}
               <div className="space-y-3">
-                <p className="text-sm font-semibold text-slate-600">Оберіть план та згенеруйте код:</p>
+                <p className="text-sm font-semibold text-muted-foreground">Оберіть план та згенеруйте код:</p>
                 <select
                   value={promoSelectedPlanId}
                   onChange={e => setPromoSelectedPlanId(e.target.value)}
@@ -1536,7 +1541,8 @@ function AdminSettingsPage({ trainers, setTrainers, classTypes, setClassTypes, p
                 <Button
                   onClick={generateCode}
                   disabled={!promoSelectedPlanId}
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
+                  variant="brand"
+                  className="w-full"
                 >
                   <Plus className="w-4 h-4 mr-1" /> Згенерувати код
                 </Button>
@@ -1544,21 +1550,21 @@ function AdminSettingsPage({ trainers, setTrainers, classTypes, setClassTypes, p
 
               {/* Code list */}
               <div className="space-y-2 max-h-72 overflow-y-auto">
-                {promoCodes.length === 0 && <p className="text-sm text-slate-400 italic">Ще немає жодного коду.</p>}
+                {promoCodes.length === 0 && <p className="text-sm text-muted-foreground/90 italic">Ще немає жодного коду.</p>}
                 {promoCodes.map(pc => (
                   <div key={pc.code} className={`p-3 rounded-xl border flex items-center justify-between gap-2 text-sm ${
-                    pc.used ? 'bg-slate-50 border-slate-200 opacity-60' : 'bg-emerald-50 border-emerald-200'
+                    pc.used ? 'bg-muted/70 border-border opacity-60' : 'bg-brand-gold/10 border-brand-gold/30'
                   }`}>
                     <div className="min-w-0">
-                      <p className="font-mono font-bold text-slate-800 tracking-wider">{pc.code}</p>
-                      <p className="text-xs text-slate-500">{pc.plan_name}</p>
+                      <p className="font-mono font-bold text-foreground tracking-wider">{pc.code}</p>
+                      <p className="text-xs text-muted-foreground">{pc.plan_name}</p>
                       {pc.used && <p className="text-xs text-red-500 mt-0.5">Використано{pc.used_by ? ` — ${pc.used_by}` : ''}</p>}
                     </div>
                     <div className="flex gap-2 shrink-0">
                       {!pc.used && (
                         <button
                           onClick={() => copyCode(pc.code)}
-                          className="px-2 py-1 rounded text-xs bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                          className="px-2 py-1 rounded text-xs bg-brand-navy text-primary-foreground hover:bg-brand-navy-dark transition-colors"
                         >
                           {copiedCode === pc.code ? '✓ Скопійовано' : 'Копіювати'}
                         </button>
@@ -1597,10 +1603,56 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
   }
 
   const CANVAS = 1080
-  const FIRST_COL_W = 100
-  const ROW_H = timeSlots.length > 0 ? Math.min(Math.floor(700 / timeSlots.length), 120) : 80
-  const GOLD = '#DDA343'
-  const TEXT_DARK = '#2C3E50'
+  const FIRST_COL_W = 104
+  const ROW_H = timeSlots.length > 0 ? Math.max(96, Math.min(Math.floor(720 / timeSlots.length), 140)) : 88
+  const GOLD = '#e2bc5a'
+  const GOLD_SOFT = '#edd078'
+  const NAVY_HEADER = '#3b5284'
+  const NAVY_DEEP = '#2d3f66'
+  const PAGE_BG = '#141c2e'
+  const TABLE_SKIN = '#1e2a42'
+  const ROW_A = '#1e2a42'
+  const ROW_B = '#263652'
+  const TEXT_MAIN = '#e8eef8'
+  const TEXT_MUTED = '#9eb0d0'
+  const BORDER = 'rgba(255,255,255,0.1)'
+  const HEADER_GRAD = `linear-gradient(135deg, ${NAVY_HEADER} 0%, ${NAVY_DEEP} 100%)`
+
+  const cellLessonTitle: React.CSSProperties = {
+    fontSize: '13px',
+    fontWeight: 800,
+    color: TEXT_MAIN,
+    lineHeight: 1.35,
+    marginBottom: '6px',
+    letterSpacing: '-0.01em',
+    maxWidth: '100%',
+    width: '100%',
+    overflow: 'hidden',
+    display: '-webkit-box',
+    WebkitBoxOrient: 'vertical' as const,
+    WebkitLineClamp: 2,
+    wordBreak: 'break-word' as const,
+    overflowWrap: 'break-word' as const,
+    boxSizing: 'border-box' as const,
+  }
+
+  const cellTrainerPill: React.CSSProperties = {
+    fontSize: '11px',
+    fontWeight: 600,
+    color: GOLD_SOFT,
+    lineHeight: 1.5,
+    backgroundColor: 'rgba(226, 188, 90, 0.16)',
+    border: '1px solid rgba(226, 188, 90, 0.35)',
+    padding: '7px 10px',
+    borderRadius: '10px',
+    maxWidth: '100%',
+    width: '100%',
+    boxSizing: 'border-box' as const,
+    wordBreak: 'break-word' as const,
+    overflowWrap: 'break-word' as const,
+    textAlign: 'center' as const,
+    display: 'block',
+  }
 
   return (
     <div style={{ position: 'fixed', top: '-99999px', left: '-99999px', width: `${CANVAS}px`, height: `${CANVAS}px` }}>
@@ -1608,53 +1660,177 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
         id="printable-schedule"
         style={{
           width: `${CANVAS}px`, height: `${CANVAS}px`,
-          background: 'radial-gradient(circle at 10% 10%, #ffffff 0%, #F7F3EB 100%)',
-          color: TEXT_DARK, display: 'flex', flexDirection: 'column',
-          fontFamily: '"Inter", "Segoe UI", system-ui, sans-serif',
-          overflow: 'hidden', boxSizing: 'border-box', padding: '40px 48px',
+          background: `linear-gradient(165deg, ${PAGE_BG} 0%, #1a2740 45%, #1e324d 100%)`,
+          color: TEXT_MAIN,
+          display: 'flex',
+          flexDirection: 'column',
+          fontFamily: '"Plus Jakarta Sans", "Inter", "Segoe UI", system-ui, sans-serif',
+          overflow: 'hidden',
+          boxSizing: 'border-box',
+          padding: '36px 44px',
         }}
       >
-        <style dangerouslySetInnerHTML={{ __html: `#printable-schedule * { border-style: none; border-width: 0; outline: none; }` }} />
+        <style dangerouslySetInnerHTML={{ __html: `
+          #printable-schedule, #printable-schedule * { box-sizing: border-box; }
+          #printable-schedule * { outline: none; }
+        ` }} />
 
-        {/* HEADER */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px', flexShrink: 0, height: '110px', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', marginBottom: '4px' }}>
-            <span style={{ fontSize: '60px', fontStyle: 'italic', fontWeight: 600, fontFamily: '"Georgia", "Times New Roman", serif', color: TEXT_DARK, marginRight: '16px', letterSpacing: '-1px' }}>Brave!</span>
-            <span style={{ fontSize: '56px', fontWeight: 900, fontFamily: '"Inter", system-ui, sans-serif', letterSpacing: '-0.03em', color: TEXT_DARK }}>Yoga</span>
+        {/* HEADER — stacked wordmark avoids baseline/italic overlap in raster export */}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: '20px',
+            flexShrink: 0,
+            width: '100%',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '2px',
+              marginBottom: '12px',
+            }}
+          >
+            <span
+              style={{
+                display: 'block',
+                fontSize: '54px',
+                lineHeight: 1,
+                fontStyle: 'italic',
+                fontWeight: 600,
+                fontFamily: '"Cormorant Garamond", Georgia, serif',
+                color: GOLD,
+                letterSpacing: '0.02em',
+                whiteSpace: 'nowrap',
+                paddingBottom: '4px',
+              }}
+            >
+              Brave!
+            </span>
+            <span
+              style={{
+                display: 'block',
+                fontSize: '36px',
+                lineHeight: 1.15,
+                fontWeight: 800,
+                fontFamily: '"Plus Jakarta Sans", Inter, sans-serif',
+                letterSpacing: '0.28em',
+                textTransform: 'uppercase',
+                color: TEXT_MAIN,
+                whiteSpace: 'nowrap',
+                marginTop: '2px',
+              }}
+            >
+              Yoga
+            </span>
           </div>
-          <div style={{ background: 'rgba(221,163,67,0.1)', padding: '6px 20px', borderRadius: '99px', fontSize: '13px', fontWeight: 700, letterSpacing: '0.2em', color: '#B48228', textTransform: 'uppercase', marginTop: '6px', textAlign: 'center' }}>
-            {format(weekStart, 'dd.MM')} — {format(weekEnd, 'dd.MM.yyyy')}
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: `linear-gradient(180deg, rgba(226,188,90,0.42) 0%, rgba(226,188,90,0.28) 100%)`,
+              border: '1px solid rgba(226,188,90,0.5)',
+              padding: '12px 28px',
+              borderRadius: '999px',
+              minHeight: '46px',
+              maxWidth: '92%',
+            }}
+          >
+            <span
+              style={{
+                fontSize: '11px',
+                fontWeight: 700,
+                letterSpacing: '0.12em',
+                color: '#121518',
+                textTransform: 'uppercase',
+                lineHeight: 1.35,
+                textAlign: 'center',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {format(weekStart, 'dd.MM')} — {format(weekEnd, 'dd.MM.yyyy')}
+            </span>
           </div>
         </div>
 
         {/* TABLE */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', borderRadius: '24px', boxShadow: '0 24px 48px rgba(0,0,0,0.06), 0 2px 6px rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.05)', overflow: 'hidden', background: 'white' }}>
-          <div style={{ display: 'flex', flexShrink: 0, height: '64px' }}>
-            <div style={{ width: `${FIRST_COL_W}px`, flexShrink: 0, background: 'linear-gradient(135deg, #1E293B 0%, #0F172A 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '1px solid rgba(255,255,255,0.1)' }}>
-              <span style={{ fontSize: '15px', fontWeight: 700, color: GOLD, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Час</span>
+        <div style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          borderRadius: '22px',
+          boxShadow: '0 20px 50px rgba(0,0,0,0.45), 0 0 0 1px rgba(226,188,90,0.2)',
+          border: `1px solid ${BORDER}`,
+          overflow: 'hidden',
+          background: TABLE_SKIN,
+          minHeight: 0,
+        }}>
+          <div style={{ display: 'flex', flexShrink: 0, height: '62px' }}>
+            <div style={{ width: `${FIRST_COL_W}px`, flexShrink: 0, background: HEADER_GRAD, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: `1px solid ${BORDER}` }}>
+              <span style={{ fontSize: '14px', fontWeight: 700, color: GOLD, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Час</span>
             </div>
             {DAY_SHORT.map((dayName, idx) => (
-              <div key={idx} style={{ flex: 1, background: 'linear-gradient(135deg, #1E293B 0%, #0F172A 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: idx < 6 ? '1px solid rgba(255,255,255,0.1)' : 'none' }}>
-                <span style={{ fontSize: '17px', fontWeight: 700, color: 'white', letterSpacing: '0.05em' }}>{dayName}</span>
+              <div key={idx} style={{ flex: 1, minWidth: 0, background: HEADER_GRAD, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: idx < 6 ? `1px solid ${BORDER}` : 'none' }}>
+                <span style={{ fontSize: '16px', fontWeight: 700, color: '#ffffff', letterSpacing: '0.05em' }}>{dayName}</span>
               </div>
             ))}
           </div>
 
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             {timeSlots.map((slot, rowIdx) => (
-              <div key={slot} style={{ display: 'flex', flex: 1, borderBottom: rowIdx < timeSlots.length - 1 ? '1px solid #F1F5F9' : 'none', minHeight: `${ROW_H}px`, background: rowIdx % 2 === 0 ? '#FFFFFF' : '#FAFAFA' }}>
-                <div style={{ width: `${FIRST_COL_W}px`, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '1px solid #F1F5F9', padding: '4px' }}>
-                  <div style={{ background: '#F1F5F9', color: '#334155', padding: '6px 12px', borderRadius: '12px', fontSize: '16px', fontWeight: 800 }}>{slot}</div>
+              <div
+                key={slot}
+                style={{
+                  display: 'flex',
+                  flex: 1,
+                  minHeight: `${ROW_H}px`,
+                  borderBottom: rowIdx < timeSlots.length - 1 ? `1px solid ${BORDER}` : 'none',
+                  background: rowIdx % 2 === 0 ? ROW_A : ROW_B,
+                }}
+              >
+                <div style={{ width: `${FIRST_COL_W}px`, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: `1px solid ${BORDER}`, padding: '6px' }}>
+                  <div style={{
+                    background: 'rgba(74, 106, 176, 0.35)',
+                    color: TEXT_MAIN,
+                    padding: '8px 12px',
+                    borderRadius: '12px',
+                    fontSize: '15px',
+                    fontWeight: 800,
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    lineHeight: 1.2,
+                  }}>{slot}</div>
                 </div>
                 {weekDays.map((day, dayIdx) => {
                   const lesson = findLesson(day, slot)
                   return (
-                    <div key={dayIdx} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', borderRight: dayIdx < 6 ? '1px solid #F1F5F9' : 'none', padding: '10px 6px', textAlign: 'center' }}>
+                    <div
+                      key={dayIdx}
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'stretch',
+                        justifyContent: 'center',
+                        borderRight: dayIdx < 6 ? `1px solid ${BORDER}` : 'none',
+                        padding: '10px 8px',
+                        textAlign: 'center',
+                        overflow: 'hidden',
+                      }}
+                    >
                       {lesson ? (
-                        <>
-                          <div style={{ fontSize: '15px', fontWeight: 800, color: '#0F172A', lineHeight: 1.2, marginBottom: '5px', letterSpacing: '-0.01em' }}>{lesson.class_name}</div>
-                          <div style={{ fontSize: '12px', fontWeight: 600, color: '#64748B', lineHeight: 1.2, backgroundColor: 'rgba(100,116,139,0.08)', padding: '3px 8px', borderRadius: '6px' }}>{lesson.trainer_name}</div>
-                        </>
+                        <div style={{ width: '100%', maxWidth: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 0, minHeight: 0 }}>
+                          <div style={cellLessonTitle}>{lesson.class_name}</div>
+                          <div style={cellTrainerPill}>{lesson.trainer_name}</div>
+                        </div>
                       ) : null}
                     </div>
                   )
@@ -1662,7 +1838,7 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
               </div>
             ))}
             {timeSlots.length === 0 && (
-              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#CBD5E1', fontSize: '20px', fontStyle: 'italic' }}>
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: TEXT_MUTED, fontSize: '19px', fontStyle: 'italic' }}>
                 Немає занять на цей тиждень
               </div>
             )}
@@ -1670,8 +1846,8 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
         </div>
 
         {/* FOOTER */}
-        <div style={{ marginTop: '16px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.8 }}>
-          <div style={{ fontSize: '14px', color: '#64748B', fontWeight: 600, letterSpacing: '0.02em' }}>Запис через посилання в профілі 🚀</div>
+        <div style={{ marginTop: '14px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ fontSize: '13px', color: TEXT_MUTED, fontWeight: 600, letterSpacing: '0.03em' }}>Запис через посилання в профілі 🚀</div>
         </div>
       </div>
     </div>
@@ -1856,93 +2032,93 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
       <Button variant="ghost" onClick={() => navigate('/admin')} className="mb-4">← Назад у меню</Button>
       <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 className="w-6 h-6 text-emerald-600" /> Статистика та зарплати</h1>
-          <p className="text-sm text-slate-500 mt-1 capitalize">{monthLabel}</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2 text-foreground"><BarChart3 className="w-6 h-6 text-brand-gold" /> Статистика та зарплати</h1>
+          <p className="text-sm text-muted-foreground mt-1 capitalize">{monthLabel}</p>
         </div>
         <input
           type="month"
           value={selectedMonth}
           onChange={e => setSelectedMonth(e.target.value)}
-          className={cn(inputClasses, 'w-48 bg-white shadow-sm')}
+          className={cn(inputClasses, 'w-48 shadow-sm')}
         />
       </div>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0 }}>
-          <Card className="border-0 shadow-lg bg-gradient-to-br from-emerald-500 to-emerald-600 text-white overflow-hidden relative">
+          <Card className="border-0 shadow-lg bg-gradient-to-br from-brand-navy to-brand-navy-dark text-primary-foreground overflow-hidden relative ring-1 ring-brand-gold/25">
             <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-white/10" />
             <CardContent className="p-5">
               <div className="flex items-center gap-2 mb-3">
-                <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
-                  <DollarSign className="w-4 h-4" />
+                <div className="w-8 h-8 rounded-lg bg-white/15 flex items-center justify-center">
+                  <DollarSign className="w-4 h-4 text-brand-gold" />
                 </div>
-                <span className="text-xs font-semibold text-emerald-100 uppercase tracking-wider">Загальний дохід</span>
+                <span className="text-xs font-semibold text-brand-gold/90 uppercase tracking-wider">Загальний дохід</span>
               </div>
               <p className="text-2xl font-black">{Math.round(totalRevenue).toLocaleString('uk-UA')} ₴</p>
-              <p className="text-xs text-emerald-200 mt-1">{totalBookings} бронювань</p>
+              <p className="text-xs text-white/70 mt-1">{totalBookings} бронювань</p>
             </CardContent>
           </Card>
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
-          <Card className="border-0 shadow-lg bg-gradient-to-br from-[#1B3A6B] to-[#0F2548] text-white overflow-hidden relative">
+          <Card className="border-0 shadow-lg bg-gradient-to-br from-primary to-brand-navy text-primary-foreground overflow-hidden relative ring-1 ring-white/10">
             <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-white/10" />
             <CardContent className="p-5">
               <div className="flex items-center gap-2 mb-3">
-                <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
-                  <Crown className="w-4 h-4 text-[#DDA343]" />
+                <div className="w-8 h-8 rounded-lg bg-white/15 flex items-center justify-center">
+                  <Crown className="w-4 h-4 text-brand-gold" />
                 </div>
-                <span className="text-xs font-semibold text-blue-200 uppercase tracking-wider">Дохід адміна</span>
+                <span className="text-xs font-semibold text-white/85 uppercase tracking-wider">Дохід адміна</span>
               </div>
-              <p className="text-2xl font-black text-[#DDA343]">{Math.round(totalAdminEarnings).toLocaleString('uk-UA')} ₴</p>
-              <p className="text-xs text-blue-300 mt-1">50% від усіх занять</p>
+              <p className="text-2xl font-black text-brand-gold">{Math.round(totalAdminEarnings).toLocaleString('uk-UA')} ₴</p>
+              <p className="text-xs text-white/70 mt-1">50% від усіх занять</p>
             </CardContent>
           </Card>
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
-          <Card className="border-0 shadow-lg bg-gradient-to-br from-violet-500 to-violet-600 text-white overflow-hidden relative">
-            <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-white/10" />
+          <Card className="border-0 shadow-lg bg-gradient-to-br from-secondary to-muted text-foreground overflow-hidden relative ring-1 ring-white/10">
+            <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-white/5" />
             <CardContent className="p-5">
               <div className="flex items-center gap-2 mb-3">
-                <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
-                  <Wallet className="w-4 h-4" />
+                <div className="w-8 h-8 rounded-lg bg-brand-gold/20 flex items-center justify-center">
+                  <Wallet className="w-4 h-4 text-brand-gold" />
                 </div>
-                <span className="text-xs font-semibold text-violet-200 uppercase tracking-wider">Виплати тренерам</span>
+                <span className="text-xs font-semibold text-brand-gold/90 uppercase tracking-wider">Виплати тренерам</span>
               </div>
               <p className="text-2xl font-black">{Math.round(totalTrainerPayout).toLocaleString('uk-UA')} ₴</p>
-              <p className="text-xs text-violet-200 mt-1">{allStats.filter(s => s.totalBookings > 0).length} активних тренерів</p>
+              <p className="text-xs text-muted-foreground mt-1">{allStats.filter(s => s.totalBookings > 0).length} активних тренерів</p>
             </CardContent>
           </Card>
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
-          <Card className="border-0 shadow-lg bg-gradient-to-br from-amber-500 to-orange-500 text-white overflow-hidden relative">
-            <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-white/10" />
+          <Card className="border-0 shadow-lg bg-gradient-to-br from-brand-gold to-brand-gold-hover text-brand-charcoal overflow-hidden relative ring-1 ring-brand-gold/40">
+            <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-black/10" />
             <CardContent className="p-5">
               <div className="flex items-center gap-2 mb-3">
-                <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
+                <div className="w-8 h-8 rounded-lg bg-black/10 flex items-center justify-center">
                   <TrendingUp className="w-4 h-4" />
                 </div>
-                <span className="text-xs font-semibold text-amber-100 uppercase tracking-wider">Всього занять</span>
+                <span className="text-xs font-semibold text-brand-charcoal/80 uppercase tracking-wider">Всього занять</span>
               </div>
               <p className="text-2xl font-black">{allStats.reduce((s, t) => s + t.totalLessons, 0)}</p>
-              <p className="text-xs text-amber-200 mt-1">за {monthLabel}</p>
+              <p className="text-xs text-brand-charcoal/70 mt-1">за {monthLabel}</p>
             </CardContent>
           </Card>
         </motion.div>
       </div>
 
       {/* Salary Formula Explanation */}
-      <Card className="mb-8 border-slate-200 bg-slate-50/50">
+      <Card className="mb-8 border-border bg-muted/40">
         <CardContent className="p-4">
           <div className="flex items-start gap-3">
-            <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+            <div className="w-8 h-8 rounded-lg bg-brand-gold/20 text-brand-gold flex items-center justify-center shrink-0 mt-0.5">
               <Settings className="w-4 h-4" />
             </div>
-            <div className="text-sm text-slate-600 space-y-1">
-              <p className="font-semibold text-slate-800">Формула розрахунку зарплати:</p>
+            <div className="text-sm text-muted-foreground space-y-1">
+              <p className="font-semibold text-foreground">Формула розрахунку зарплати:</p>
               <p>• <b>Разове заняття ({SINGLE_VISIT_PRICE}₴):</b> 50% адмін ({SINGLE_VISIT_PRICE/2}₴) + 50% тренер ({SINGLE_VISIT_PRICE/2}₴)</p>
               <p>• <b>Абонемент:</b> (ціна абонементу ÷ к-сть днів) ÷ 2 — одна частина адміну, інша тренеру за кожне проведене заняття</p>
             </div>
@@ -1952,21 +2128,21 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
 
       {/* Trainer Salary Table */}
       <Card className="border-0 shadow-lg overflow-hidden">
-        <CardHeader className="bg-gradient-to-r from-slate-800 to-slate-900 text-white pb-4">
+        <CardHeader className="bg-gradient-to-r from-brand-navy to-brand-navy-dark text-primary-foreground pb-4 border-b border-white/10">
           <CardTitle className="flex items-center gap-2 text-lg">
-            <Users className="w-5 h-5 text-emerald-400" />
-            Зарплати тренерів — <span className="capitalize text-emerald-300">{monthLabel}</span>
+            <Users className="w-5 h-5 text-brand-gold" />
+            Зарплати тренерів — <span className="capitalize text-brand-gold/95">{monthLabel}</span>
           </CardTitle>
-          <CardDescription className="text-slate-400 text-xs">Натисніть на тренера, щоб побачити деталі по кожному заняттю</CardDescription>
+          <CardDescription className="text-white/65 text-xs">Натисніть на тренера, щоб побачити деталі по кожному заняттю</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {allStats.length === 0 ? (
-            <div className="p-12 text-center text-slate-400">
-              <BarChart3 className="w-12 h-12 mx-auto mb-3 opacity-40" />
+            <div className="p-12 text-center text-muted-foreground">
+              <BarChart3 className="w-12 h-12 mx-auto mb-3 opacity-40 text-brand-gold" />
               <p>Немає даних за цей місяць</p>
             </div>
           ) : (
-            <div className="divide-y divide-slate-100">
+            <div className="divide-y divide-border">
               {allStats.map((stats, idx) => {
                 const isExpanded = expandedTrainer === stats.trainerName
                 const hasData = stats.totalBookings > 0
@@ -1983,7 +2159,7 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
                     <div
                       className={cn(
                         "p-5 cursor-pointer transition-colors",
-                        isExpanded ? "bg-emerald-50/50" : "hover:bg-slate-50",
+                        isExpanded ? "bg-brand-gold/10" : "hover:bg-muted/60",
                         !hasData && "opacity-50"
                       )}
                       onClick={() => setExpandedTrainer(isExpanded ? null : stats.trainerName)}
@@ -1992,10 +2168,10 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
                         {/* Avatar */}
                         <div className={cn(
                           "w-12 h-12 rounded-xl flex items-center justify-center text-lg font-bold shrink-0 shadow-sm",
-                          idx === 0 && hasData ? "bg-gradient-to-br from-[#DDA343] to-[#F0C75E] text-white" :
-                          idx === 1 && hasData ? "bg-gradient-to-br from-slate-400 to-slate-500 text-white" :
-                          idx === 2 && hasData ? "bg-gradient-to-br from-amber-600 to-amber-700 text-white" :
-                          "bg-slate-100 text-slate-400"
+                          idx === 0 && hasData ? "bg-gradient-to-br from-brand-gold to-brand-gold-light text-brand-charcoal" :
+                          idx === 1 && hasData ? "bg-gradient-to-br from-primary to-brand-navy text-primary-foreground" :
+                          idx === 2 && hasData ? "bg-gradient-to-br from-secondary to-muted text-foreground" :
+                          "bg-muted text-muted-foreground"
                         )}>
                           {stats.trainerName.charAt(0).toUpperCase()}
                         </div>
@@ -2003,26 +2179,26 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
                         {/* Info */}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <h3 className="font-bold text-slate-900">{stats.trainerName}</h3>
+                            <h3 className="font-bold text-foreground">{stats.trainerName}</h3>
                             {idx === 0 && hasData && (
-                              <Badge className="bg-[#DDA343] text-white border-0 text-[9px] px-1.5">Топ</Badge>
+                              <Badge className="bg-brand-gold text-brand-charcoal border-0 text-[9px] px-1.5">Топ</Badge>
                             )}
                           </div>
-                          <div className="flex flex-wrap gap-3 mt-1 text-xs text-slate-500">
+                          <div className="flex flex-wrap gap-3 mt-1 text-xs text-muted-foreground">
                             <span>{stats.totalLessons} занять</span>
                             <span>{stats.totalBookings} бронювань</span>
-                            <span className="text-blue-500">{stats.singleVisitBookings} разових</span>
-                            <span className="text-purple-500">{stats.subscriptionBookings} абонемент</span>
+                            <span className="text-primary">{stats.singleVisitBookings} разових</span>
+                            <span className="text-brand-gold">{stats.subscriptionBookings} абонемент</span>
                           </div>
                           {/* Earnings bar */}
                           {hasData && (
                             <div className="mt-2 flex items-center gap-3">
-                              <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                              <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
                                 <motion.div
                                   initial={{ width: 0 }}
                                   animate={{ width: `${barWidth}%` }}
                                   transition={{ duration: 0.6, delay: idx * 0.05 }}
-                                  className="h-full bg-gradient-to-r from-emerald-400 to-emerald-500 rounded-full"
+                                  className="h-full bg-gradient-to-r from-brand-gold to-brand-gold-light rounded-full"
                                 />
                               </div>
                             </div>
@@ -2031,12 +2207,12 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
 
                         {/* Salary Amount */}
                         <div className="text-right shrink-0">
-                          <p className="text-xl font-black text-emerald-600">{Math.round(stats.trainerEarnings).toLocaleString('uk-UA')} ₴</p>
-                          <p className="text-[10px] text-slate-400 mt-0.5">зарплата тренера</p>
+                          <p className="text-xl font-black text-brand-gold">{Math.round(stats.trainerEarnings).toLocaleString('uk-UA')} ₴</p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">зарплата тренера</p>
                         </div>
 
                         {/* Expand Arrow */}
-                        <ChevronRight className={cn("w-5 h-5 text-slate-300 transition-transform shrink-0", isExpanded && "rotate-90 text-emerald-500")} />
+                        <ChevronRight className={cn("w-5 h-5 text-muted-foreground transition-transform shrink-0", isExpanded && "rotate-90 text-brand-gold")} />
                       </div>
                     </div>
 
@@ -2050,33 +2226,33 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
                           transition={{ duration: 0.25 }}
                           className="overflow-hidden"
                         >
-                          <div className="px-5 pb-5 pt-2 bg-slate-50/80">
+                          <div className="px-5 pb-5 pt-2 bg-muted/50">
                             {/* Summary row */}
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-                              <div className="p-3 bg-white rounded-xl border border-slate-200 text-center">
-                                <p className="text-lg font-black text-emerald-600">{Math.round(stats.trainerEarnings).toLocaleString('uk-UA')}₴</p>
-                                <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Тренер</p>
+                              <div className="p-3 bg-card rounded-xl border border-border text-center">
+                                <p className="text-lg font-black text-brand-gold">{Math.round(stats.trainerEarnings).toLocaleString('uk-UA')}₴</p>
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Тренер</p>
                               </div>
-                              <div className="p-3 bg-white rounded-xl border border-slate-200 text-center">
-                                <p className="text-lg font-black text-[#DDA343]">{Math.round(stats.adminEarnings).toLocaleString('uk-UA')}₴</p>
-                                <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Адмін</p>
+                              <div className="p-3 bg-card rounded-xl border border-border text-center">
+                                <p className="text-lg font-black text-brand-gold">{Math.round(stats.adminEarnings).toLocaleString('uk-UA')}₴</p>
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Адмін</p>
                               </div>
-                              <div className="p-3 bg-white rounded-xl border border-slate-200 text-center">
-                                <p className="text-lg font-black text-slate-700">{Math.round(stats.totalRevenue).toLocaleString('uk-UA')}₴</p>
-                                <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Всього</p>
+                              <div className="p-3 bg-card rounded-xl border border-border text-center">
+                                <p className="text-lg font-black text-foreground">{Math.round(stats.totalRevenue).toLocaleString('uk-UA')}₴</p>
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Всього</p>
                               </div>
-                              <div className="p-3 bg-white rounded-xl border border-slate-200 text-center">
-                                <p className="text-lg font-black text-blue-600">{stats.totalBookings}</p>
-                                <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Бронювань</p>
+                              <div className="p-3 bg-card rounded-xl border border-border text-center">
+                                <p className="text-lg font-black text-primary">{stats.totalBookings}</p>
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Бронювань</p>
                               </div>
                             </div>
 
                             {/* Detail Table */}
                             {stats.lessonDetails.length > 0 && (
-                              <div className="rounded-xl overflow-hidden border border-slate-200">
+                              <div className="rounded-xl overflow-hidden border border-border">
                                 <table className="w-full text-sm">
                                   <thead>
-                                    <tr className="bg-slate-100 text-slate-600 text-xs">
+                                    <tr className="bg-muted text-muted-foreground text-xs">
                                       <th className="text-left p-3 font-semibold">Заняття</th>
                                       <th className="text-center p-3 font-semibold">Дата</th>
                                       <th className="text-center p-3 font-semibold">Записи</th>
@@ -2084,16 +2260,16 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
                                       <th className="text-right p-3 font-semibold">Адмін</th>
                                     </tr>
                                   </thead>
-                                  <tbody className="bg-white divide-y divide-slate-100">
+                                  <tbody className="bg-card divide-y divide-border">
                                     {stats.lessonDetails.map(detail => (
-                                      <tr key={detail.lessonId} className="hover:bg-slate-50 transition-colors">
-                                        <td className="p-3 font-semibold text-slate-800">{detail.className}</td>
-                                        <td className="p-3 text-center text-slate-500 text-xs">{format(detail.date, 'dd.MM HH:mm')}</td>
+                                      <tr key={detail.lessonId} className="hover:bg-muted/40 transition-colors">
+                                        <td className="p-3 font-semibold text-foreground">{detail.className}</td>
+                                        <td className="p-3 text-center text-muted-foreground text-xs">{format(detail.date, 'dd.MM HH:mm')}</td>
                                         <td className="p-3 text-center">
                                           <Badge variant="outline" className="text-[10px]">{detail.bookedCount}</Badge>
                                         </td>
-                                        <td className="p-3 text-right font-bold text-emerald-600">{Math.round(detail.trainerShare)}₴</td>
-                                        <td className="p-3 text-right font-bold text-[#DDA343]">{Math.round(detail.adminShare)}₴</td>
+                                        <td className="p-3 text-right font-bold text-brand-gold">{Math.round(detail.trainerShare)}₴</td>
+                                        <td className="p-3 text-right font-bold text-brand-gold">{Math.round(detail.adminShare)}₴</td>
                                       </tr>
                                     ))}
                                   </tbody>
@@ -2177,15 +2353,15 @@ function AdminSchedulePage({ lessons, setLessons, trainers, classTypes }: { less
 
       <SocialMediaPoster lessons={weeklyLessons} weekStart={weekStart} weekEnd={weekEnd} />
 
-      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between mb-6 border-b border-gray-200 pb-4">
+      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between mb-6 border-b border-border pb-4">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><CalendarIcon className="w-6 h-6 text-purple-600"/> Тижневий білдер</h1>
-          <p className="text-sm text-slate-500">Створюйте та модифікуйте графік на весь тиждень</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2 text-foreground"><CalendarIcon className="w-6 h-6 text-brand-gold"/> Тижневий білдер</h1>
+          <p className="text-sm text-muted-foreground">Створюйте та модифікуйте графік на весь тиждень</p>
         </div>
 
         <div className="flex items-center gap-3 w-full sm:w-auto">
-          <input type="date" className={cn(inputClasses, "w-44 bg-white shadow-sm")} value={selectedDate ? format(selectedDate, 'yyyy-MM-dd') : ''} onChange={e => setSelectedDate(new Date(e.target.value))} />
-          <Button onClick={handleExportPhoto} disabled={isExporting} className="bg-purple-600 hover:bg-purple-700 text-white w-full sm:w-auto">
+          <input type="date" className={cn(inputClasses, "w-44 shadow-sm")} value={selectedDate ? format(selectedDate, 'yyyy-MM-dd') : ''} onChange={e => setSelectedDate(new Date(e.target.value))} />
+          <Button onClick={handleExportPhoto} disabled={isExporting} variant="brand" className="w-full sm:w-auto">
             <Camera className="w-4 h-4 mr-2" />
             {isExporting ? 'Генерується...' : 'Згенерувати фото (Instagram)'}
           </Button>
@@ -2198,25 +2374,25 @@ function AdminSchedulePage({ lessons, setLessons, trainers, classTypes }: { less
           const isTodayLoc = isSameDay(day, new Date())
           const dayLessons = weeklyLessons.filter(l => isSameDay(l.start_timestamp, day)).sort((a,b)=>a.start_timestamp.getTime()-b.start_timestamp.getTime())
           return (
-            <Card key={day.toISOString()} className={cn("flex flex-col border-none shadow-sm h-full", isTodayLoc ? "ring-2 ring-purple-500" : "border border-gray-200")}>
-              <CardHeader className="bg-slate-100/50 p-3 pb-2 text-center border-b border-gray-100 rounded-t-xl shrink-0">
-                 <p className="text-sm font-bold uppercase text-slate-600">{format(day, 'EEEE', {locale: uk})}</p>
-                 <p className={cn("text-xs", isTodayLoc ? "text-purple-600 font-bold" : "text-slate-400")}>{format(day, 'dd MMMM', {locale: uk})}</p>
+            <Card key={day.toISOString()} className={cn("flex flex-col border-none shadow-sm h-full", isTodayLoc ? "ring-2 ring-brand-gold" : "border border-border/80")}>
+              <CardHeader className="bg-muted/50 p-3 pb-2 text-center border-b border-border/70 rounded-t-xl shrink-0">
+                 <p className="text-sm font-bold uppercase text-muted-foreground">{format(day, 'EEEE', {locale: uk})}</p>
+                 <p className={cn("text-xs", isTodayLoc ? "text-brand-gold font-bold" : "text-muted-foreground/90")}>{format(day, 'dd MMMM', {locale: uk})}</p>
               </CardHeader>
               <CardContent className="p-2 flex-1 flex flex-col gap-2 overflow-y-auto min-h-[300px]">
                 {dayLessons.map(l => (
-                  <div key={l.id} className="p-2 rounded-lg border border-slate-200 bg-white text-xs hover:border-purple-300 transition-colors group relative">
-                    <p className="font-bold text-slate-800 leading-tight">{l.class_name}</p>
-                    <p className="text-slate-500 mt-1 font-medium">{format(l.start_timestamp, 'HH:mm')} - {format(l.end_timestamp, 'HH:mm')}</p>
-                    <p className="text-slate-400 mt-0.5">{l.trainer_name}</p>
-                    <button onClick={() => { if(confirm('Видалити заняття?')) setLessons(p=>p.filter(x=>x.id!==l.id)) }} className="absolute top-1 right-1 w-5 h-5 rounded-md bg-red-50 text-red-600 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div key={l.id} className="p-2 rounded-lg border border-border bg-card text-xs hover:border-brand-gold/50 transition-colors group relative">
+                    <p className="font-bold text-foreground leading-tight">{l.class_name}</p>
+                    <p className="text-muted-foreground mt-1 font-medium">{format(l.start_timestamp, 'HH:mm')} - {format(l.end_timestamp, 'HH:mm')}</p>
+                    <p className="text-muted-foreground/90 mt-0.5">{l.trainer_name}</p>
+                    <button onClick={() => { if(confirm('Видалити заняття?')) setLessons(p=>p.filter(x=>x.id!==l.id)) }} className="absolute top-1 right-1 w-5 h-5 rounded-md bg-red-950/60 text-red-300 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                       <X className="w-3 h-3" />
                     </button>
                   </div>
                 ))}
 
                 <div className="mt-auto pt-2">
-                  <Button variant="ghost" className="w-full h-8 text-xs border border-dashed border-slate-300 text-slate-500 hover:text-purple-600 hover:bg-purple-50 hover:border-purple-300"
+                  <Button variant="ghost" className="w-full h-8 text-xs border border-dashed border-border text-muted-foreground hover:text-brand-gold hover:bg-brand-gold/10 hover:border-brand-gold/40"
                     onClick={() => {
                        setTargetDateForNewLesson(day);
                        setNewLessonName(classTypes[0] || '');
@@ -2238,7 +2414,7 @@ function AdminSchedulePage({ lessons, setLessons, trainers, classTypes }: { less
           <form onSubmit={handleAddLesson} className="space-y-4">
             <div>
               <p className="font-bold text-lg">Нове заняття</p>
-              <p className="text-sm text-slate-500">На дату: {format(targetDateForNewLesson, 'dd MMMM yyyy', {locale: uk})}</p>
+              <p className="text-sm text-muted-foreground">На дату: {format(targetDateForNewLesson, 'dd MMMM yyyy', {locale: uk})}</p>
             </div>
             <div>
               <label className="text-sm font-medium">Назва заняття</label>
@@ -2264,7 +2440,7 @@ function AdminSchedulePage({ lessons, setLessons, trainers, classTypes }: { less
                 <input required placeholder="Спочатку додайте тренерів в Налаштуваннях" value={newLessonTrainer} onChange={e=>setNewLessonTrainer(e.target.value)} className={inputClasses} />
               )}
             </div>
-            <Button type="submit" className="w-full bg-purple-600 hover:bg-purple-700 text-white">Створити заняття</Button>
+            <Button type="submit" variant="brand" className="w-full">Створити заняття</Button>
           </form>
         </DialogContent>
       </Dialog>

@@ -1,45 +1,60 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-  
-  --color-background: hsl(0, 0%, 100%);
-  --color-foreground: hsl(240, 10%, 3.9%);
-  
-  --color-card: hsl(0, 0%, 100%);
-  --color-card-foreground: hsl(240, 10%, 3.9%);
+  --font-sans: "Plus Jakarta Sans", "Inter", system-ui, sans-serif;
+  --font-display: "Cormorant Garamond", Georgia, "Times New Roman", serif;
 
-  --color-primary: hsl(240, 5.9%, 10%);
-  --color-primary-foreground: hsl(0, 0%, 98%);
-  
-  --color-secondary: hsl(240, 4.8%, 95.9%);
-  --color-secondary-foreground: hsl(240, 5.9%, 10%);
+  /* Brand */
+  --color-brand-charcoal: #121518;
+  --color-brand-navy: #3b5284;
+  --color-brand-navy-dark: #2d3f66;
+  --color-brand-navy-muted: #6b7fa3;
+  --color-brand-gold: #e2bc5a;
+  --color-brand-gold-light: #edd078;
+  --color-brand-gold-hover: #c9a54a;
+  --color-brand-gold-muted: #a88b3d;
 
-  --color-destructive: hsl(0, 84.2%, 60.2%);
-  --color-destructive-foreground: hsl(0, 0%, 98%);
+  /* Blue-first surfaces (deeper → elevated) */
+  --color-background: #141c2e;
+  --color-foreground: #e8eef8;
 
-  --color-muted: hsl(240, 4.8%, 95.9%);
-  --color-muted-foreground: hsl(240, 3.8%, 46.1%);
+  --color-card: #1e2a42;
+  --color-card-foreground: #e8eef8;
 
-  --color-accent: hsl(240, 4.8%, 95.9%);
-  --color-accent-foreground: hsl(240, 5.9%, 10%);
+  --color-muted: #263652;
+  --color-muted-foreground: #9eb0d0;
 
-  --color-border: hsl(240, 5.9%, 90%);
-  --color-input: hsl(240, 5.9%, 90%);
-  --color-ring: hsl(240, 10%, 3.9%);
-  
-  --radius-sm: 0.125rem;
-  --radius-md: 0.375rem;
-  --radius-lg: 0.5rem;
-  --radius-xl: 0.75rem;
+  --color-secondary: #2f4262;
+  --color-secondary-foreground: #dce6f7;
+
+  /* Primary actions: lighter blue lift on blue UI */
+  --color-primary: #4a6ab0;
+  --color-primary-foreground: #f7f9fd;
+
+  --color-accent: color-mix(in srgb, var(--color-brand-gold) 16%, transparent);
+  --color-accent-foreground: #f2f4f8;
+
+  --color-destructive: #e85d5d;
+  --color-destructive-foreground: #ffffff;
+
+  --color-border: rgba(255, 255, 255, 0.09);
+  --color-input: rgba(255, 255, 255, 0.07);
+  --color-ring: var(--color-brand-gold);
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
 }
 
 @layer base {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     border-color: var(--color-border);
     box-sizing: border-box;
   }
-  
+
   html {
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
@@ -47,15 +62,35 @@
   }
 
   body {
-    background-color: var(--color-background);
-    color: var(--color-foreground);
     margin: 0;
     padding: 0;
+    color: var(--color-foreground);
+    background-color: var(--color-background);
+    background-image:
+      linear-gradient(165deg, #0f1626 0%, #141c2e 35%, #1a2740 70%, #1c2d45 100%),
+      radial-gradient(ellipse 100% 80% at 100% 0%, color-mix(in srgb, var(--color-brand-navy) 22%, transparent), transparent 55%),
+      radial-gradient(ellipse 70% 50% at 0% 100%, color-mix(in srgb, var(--color-brand-gold) 6%, transparent), transparent 50%);
+    background-attachment: fixed;
   }
 
   .container {
     max-width: 1280px;
     margin-left: auto;
     margin-right: auto;
+  }
+
+  .font-brand-script {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+
+  .font-brand-sans {
+    font-family: var(--font-sans);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-size: 0.72em;
   }
 }
