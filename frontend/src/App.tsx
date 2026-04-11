@@ -375,12 +375,12 @@ function ClientPage({ lessons, currentClient, onClientLogout, reloadAppData }: {
       <Header role="CLIENT" currentClient={currentClient} onClientLogout={onClientLogout} />
       <main className="container px-4 sm:px-8 pt-10 pb-24 grid grid-cols-1 md:grid-cols-12 gap-8">
         <div className="md:col-span-4 lg:col-span-3 space-y-5">
-          <Card className="border-white/[0.08] overflow-hidden bg-secondary/25 shadow-md shadow-black/15">
+          <Card className="border-white/[0.08] bg-secondary/25 shadow-md shadow-black/15">
             <CardHeader className="pb-2 border-b border-white/[0.06] bg-muted/40">
               <CardTitle className="text-xs font-bold text-brand-gold uppercase tracking-[0.15em]">Оберіть дату</CardTitle>
             </CardHeader>
-            <CardContent className="pt-3 px-2">
-              <Calendar mode="single" selected={selectedDate} onSelect={setSelectedDate} className="mx-auto" />
+            <CardContent className="flex justify-center overflow-x-auto pt-3 px-1 pb-2 sm:px-3">
+              <Calendar mode="single" selected={selectedDate} onSelect={setSelectedDate} className="mx-auto w-min max-w-full" />
             </CardContent>
           </Card>
 
