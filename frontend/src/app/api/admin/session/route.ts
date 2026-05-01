@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
-import { signAdminSessionToken, verifyAdminSessionToken } from '@/lib/admin-crypto'
+import { constantTimeEqual, signAdminSessionToken, verifyAdminSessionToken } from '@/lib/admin-crypto'
+import { clientIpFromHeaders, rateLimit } from '@/lib/rate-limit'
 
 const COOKIE = 'brave_admin'
 
@@ -11,6 +12,10 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    const ip = clientIpFromHeaders(req.headers)
+    if (!rateLimit(`admin-login:${ip}`, 5, 60_000)) {
+      return NextResponse.json({ error: 'Too many attempts. Try again shortly.' }, { status: 429 })
+    }
     const sessionSecret = process.env.ADMIN_SESSION_SECRET
     if (!sessionSecret || sessionSecret.length < 16) {
       return NextResponse.json(
@@ -23,7 +28,7 @@ export async function POST(req: Request) {
     }
     const { password } = (await req.json()) as { password?: string }
     const expected = process.env.ADMIN_DASHBOARD_PASSWORD
-    if (!expected || password !== expected) {
+    if (!expected || !constantTimeEqual(password ?? '', expected)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     const token = signAdminSessionToken()

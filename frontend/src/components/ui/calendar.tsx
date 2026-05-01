@@ -16,6 +16,7 @@ function Calendar({
   return (
     <DayPicker
       showOutsideDays={showOutsideDays}
+      weekStartsOn={1}
       /** Puts prev/next beside the caption so they stay on the calendar, not a full-width top bar. */
       navLayout={navLayout ?? "around"}
       className={cn("p-2 sm:p-3 w-fit max-w-full mx-auto", className)}
