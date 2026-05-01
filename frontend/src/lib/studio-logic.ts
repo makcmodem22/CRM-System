@@ -106,31 +106,66 @@ export async function seedLessonsIfEmpty(p: PrismaClient = prisma) {
   })
 }
 
-async function buildClientsPayload(p: PrismaClient = prisma) {
+type ClientPayload = {
+  id: string
+  name: string
+  email: string
+  phone: string
+  password: string
+  subscriptions: ClientSub[]
+  bookings: Array<{
+    lessonId: string
+    className: string
+    date: string
+    trainerName: string
+  } & ClientBookingMeta>
+}
+
+function shapeBookings(
+  bookings: Array<{
+    lesson_id: string
+    created_at: Date
+    meta: unknown
+    lesson: { class_name: string; trainer_name: string }
+  }>,
+) {
+  return bookings.map(b => {
+    const meta = (b.meta || {}) as ClientBookingMeta
+    return {
+      lessonId: b.lesson_id,
+      className: b.lesson.class_name,
+      date: b.created_at.toISOString(),
+      trainerName: b.lesson.trainer_name,
+      ...meta,
+    }
+  })
+}
+
+async function buildAdminClientsPayload(p: PrismaClient = prisma): Promise<ClientPayload[]> {
   const studioClients = await p.studioClient.findMany()
   const bookings = await p.publicLessonBooking.findMany({
     include: { lesson: true },
     orderBy: { created_at: 'desc' },
   })
-
+  const byUid = new Map<string, typeof bookings>()
+  const byEmail = new Map<string, typeof bookings>()
+  for (const b of bookings) {
+    if (b.client_user_id) {
+      const list = byUid.get(b.client_user_id) ?? []
+      list.push(b)
+      byUid.set(b.client_user_id, list)
+    }
+    const e = b.client_email.trim().toLowerCase()
+    const list = byEmail.get(e) ?? []
+    list.push(b)
+    byEmail.set(e, list)
+  }
   return studioClients.map(sc => {
     const subs = (sc.subscriptions_json as unknown as ClientSub[]) || []
     const emailLower = sc.email.trim().toLowerCase()
-    const myBookings = bookings.filter(
-      b =>
-        (b.client_user_id && b.client_user_id === sc.id) ||
-        b.client_email.trim().toLowerCase() === emailLower
-    )
-    const clientBookings = myBookings.map(b => {
-      const meta = (b.meta || {}) as ClientBookingMeta
-      return {
-        lessonId: b.lesson_id,
-        className: b.lesson.class_name,
-        date: b.created_at.toISOString(),
-        trainerName: b.lesson.trainer_name,
-        ...meta,
-      }
-    })
+    const merged = new Map<string, (typeof bookings)[number]>()
+    for (const b of byUid.get(sc.id) ?? []) merged.set(b.id, b)
+    for (const b of byEmail.get(emailLower) ?? []) merged.set(b.id, b)
     return {
       id: sc.id,
       name: sc.name,
@@ -138,20 +173,61 @@ async function buildClientsPayload(p: PrismaClient = prisma) {
       phone: sc.phone,
       password: '',
       subscriptions: subs,
-      bookings: clientBookings,
+      bookings: shapeBookings([...merged.values()]),
     }
   })
 }
 
-async function buildSingleClientPayload(userId: string, p: PrismaClient = prisma) {
-  const all = await buildClientsPayload(p)
-  return all.filter(c => c.id === userId)
+async function buildSingleClientPayload(userId: string, p: PrismaClient = prisma): Promise<ClientPayload[]> {
+  const sc = await p.studioClient.findUnique({ where: { id: userId } })
+  if (!sc) return []
+  const emailLower = sc.email.trim().toLowerCase()
+  const myBookings = await p.publicLessonBooking.findMany({
+    where: {
+      OR: [
+        { client_user_id: sc.id },
+        { client_email: { equals: sc.email, mode: 'insensitive' } },
+      ],
+    },
+    include: { lesson: true },
+    orderBy: { created_at: 'desc' },
+  })
+  const subs = (sc.subscriptions_json as unknown as ClientSub[]) || []
+  return [
+    {
+      id: sc.id,
+      name: sc.name,
+      email: sc.email,
+      phone: sc.phone,
+      password: '',
+      subscriptions: subs,
+      bookings: shapeBookings(
+        myBookings.filter(b =>
+          b.client_user_id === sc.id || b.client_email.trim().toLowerCase() === emailLower,
+        ),
+      ),
+    },
+  ]
 }
+
+const LESSON_HISTORY_DAYS = 30
+const LESSON_LOOKAHEAD_DAYS = 90
 
 export async function getBootstrapData(opts: { isAdmin: boolean; userId: string | null }) {
   await seedLessonsIfEmpty()
   const cfg = await ensureStudioConfig()
-  const lessons = await prisma.publicLesson.findMany({ orderBy: { start_timestamp: 'asc' } })
+  const now = Date.now()
+  const lessons = await prisma.publicLesson.findMany({
+    where: opts.isAdmin
+      ? undefined
+      : {
+          start_timestamp: {
+            gte: new Date(now - LESSON_HISTORY_DAYS * 24 * 60 * 60 * 1000),
+            lte: new Date(now + LESSON_LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000),
+          },
+        },
+    orderBy: { start_timestamp: 'asc' },
+  })
   const lessonJson = lessons.map(l => ({
     id: l.id,
     class_name: l.class_name,
@@ -163,9 +239,9 @@ export async function getBootstrapData(opts: { isAdmin: boolean; userId: string 
     status: l.status,
   }))
 
-  let clients: Awaited<ReturnType<typeof buildClientsPayload>>
+  let clients: ClientPayload[]
   if (opts.isAdmin) {
-    clients = await buildClientsPayload()
+    clients = await buildAdminClientsPayload()
   } else if (opts.userId) {
     clients = await buildSingleClientPayload(opts.userId)
   } else {
@@ -226,10 +302,56 @@ export async function createLesson(data: {
   })
 }
 
+/**
+ * Refund subscription sessions for every booking on the lesson, then cascade-delete
+ * the lesson row. Mirrors {@link autoCancelLowAttendanceLessons} so admin-driven
+ * deletes don't silently burn paid subscription credits.
+ */
 export async function deleteLessonById(id: string) {
-  await prisma.publicLesson.delete({ where: { id } })
+  await prisma.$transaction(async tx => {
+    const bookings = await tx.publicLessonBooking.findMany({ where: { lesson_id: id } })
+    for (const booking of bookings) {
+      const meta = (booking.meta || {}) as ClientBookingMeta
+      if (meta.subscription_id && booking.client_user_id) {
+        const client = await tx.studioClient.findUnique({ where: { id: booking.client_user_id } })
+        if (client) {
+          const subs = ((client.subscriptions_json as unknown as ClientSub[]) || []).map(s =>
+            s.id === meta.subscription_id
+              ? { ...s, used_sessions: Math.max(0, (s.used_sessions || 0) - 1) }
+              : s,
+          )
+          await tx.studioClient.update({
+            where: { id: client.id },
+            data: { subscriptions_json: subs as Prisma.InputJsonValue },
+          })
+        }
+      }
+    }
+    await tx.publicLesson.delete({ where: { id } })
+  })
 }
 
+export async function updateLessonById(
+  id: string,
+  data: {
+    class_name: string
+    trainer_name: string
+    start_timestamp: string
+    end_timestamp: string
+  },
+) {
+  await prisma.publicLesson.update({
+    where: { id },
+    data: {
+      class_name: data.class_name,
+      trainer_name: data.trainer_name,
+      start_timestamp: new Date(data.start_timestamp),
+      end_timestamp: new Date(data.end_timestamp),
+    },
+  })
+}
+
+/** The verified email is read from the auth session at the action layer; never trust caller-supplied email. */
 export async function upsertStudioClientRow(body: { id: string; email: string; name: string; phone: string }) {
   await prisma.studioClient.upsert({
     where: { id: String(body.id) },
@@ -248,6 +370,29 @@ export async function upsertStudioClientRow(body: { id: string; email: string; n
   })
 }
 
+/**
+ * Look up the studio_client row for an authenticated user, creating an empty
+ * one keyed to the verified email if missing. Returns the row used as the
+ * source of truth for booking identity.
+ */
+export async function ensureStudioClientForUser(user: { id: string; email: string }) {
+  const existing = await prisma.studioClient.findUnique({ where: { id: user.id } })
+  if (existing) {
+    if (existing.email.trim().toLowerCase() !== user.email.trim().toLowerCase()) {
+      return prisma.studioClient.update({
+        where: { id: user.id },
+        data: { email: user.email },
+      })
+    }
+    return existing
+  }
+  return prisma.studioClient.upsert({
+    where: { id: user.id },
+    create: { id: user.id, email: user.email, name: '', phone: '', subscriptions_json: [] },
+    update: { email: user.email },
+  })
+}
+
 export async function putClientSubscriptionsRow(clientId: string, subscriptions: unknown[]) {
   await prisma.studioClient.update({
     where: { id: clientId },
@@ -255,17 +400,40 @@ export async function putClientSubscriptionsRow(clientId: string, subscriptions:
   })
 }
 
+export type CreatedBooking = {
+  bookingId: string
+  className: string
+  trainerName: string
+  startTimestamp: Date
+}
+
+/**
+ * Atomic capacity-and-status check via conditional updateMany. Capacity is bounded
+ * by a raw SQL fragment so two concurrent bookings can't both pass the gate.
+ */
 export async function postBookingRow(body: {
   lessonId: string
   client_email: string
   client_name: string
   client_user_id?: string | null
   meta?: Record<string, unknown> | null
-}): Promise<string> {
+}): Promise<CreatedBooking> {
   return prisma.$transaction(async tx => {
+    const reserved = await tx.$executeRaw`
+      UPDATE public_lesson
+      SET booked_count = booked_count + 1
+      WHERE id = ${body.lessonId}
+        AND status = 'SCHEDULED'
+        AND booked_count < capacity
+    `
+    if (reserved === 0) {
+      const lesson = await tx.publicLesson.findUnique({ where: { id: body.lessonId } })
+      if (!lesson) throw new Error('Lesson not found')
+      if (lesson.status !== 'SCHEDULED') throw new Error('Class is not available for booking')
+      throw new Error('Class is full')
+    }
     const lesson = await tx.publicLesson.findUnique({ where: { id: body.lessonId } })
     if (!lesson) throw new Error('Lesson not found')
-    if (lesson.booked_count >= lesson.capacity) throw new Error('Class is full')
     const booking = await tx.publicLessonBooking.create({
       data: {
         lesson_id: body.lessonId,
@@ -275,96 +443,231 @@ export async function postBookingRow(body: {
         meta: body.meta ? (body.meta as Prisma.InputJsonValue) : Prisma.JsonNull,
       },
     })
-    await tx.publicLesson.update({
-      where: { id: body.lessonId },
-      data: { booked_count: { increment: 1 } },
-    })
-    return booking.id
+    return {
+      bookingId: booking.id,
+      className: lesson.class_name,
+      trainerName: lesson.trainer_name,
+      startTimestamp: lesson.start_timestamp,
+    }
   })
 }
 
+/**
+ * Books a lesson and decrements the named subscription's remaining sessions atomically.
+ * Server-side it re-reads the client's subscriptions and validates the chosen subscription
+ * has remaining sessions, so a stale or hostile client can't grant itself extra sessions.
+ */
 export async function postBookingWithSubscriptionRow(body: {
   lessonId: string
   client_user_id: string
   client_email: string
   client_name: string
-  subscriptions: ClientSub[]
+  subscriptionId: string
   meta?: Record<string, unknown> | null
-}) {
-  await prisma.$transaction(async tx => {
+}): Promise<CreatedBooking> {
+  return prisma.$transaction(async tx => {
+    const client = await tx.studioClient.findUnique({ where: { id: body.client_user_id } })
+    if (!client) throw new Error('Client not found')
+    const subs = ((client.subscriptions_json as unknown as ClientSub[]) || []).slice()
+    const idx = subs.findIndex(s => s.id === body.subscriptionId)
+    if (idx === -1) throw new Error('Subscription not found')
+    const sub = subs[idx]
+    if (sub.used_sessions >= sub.total_sessions) throw new Error('No remaining sessions')
+    if (Date.parse(sub.expires_at) <= Date.now()) throw new Error('Subscription expired')
+
+    const reserved = await tx.$executeRaw`
+      UPDATE public_lesson
+      SET booked_count = booked_count + 1
+      WHERE id = ${body.lessonId}
+        AND status = 'SCHEDULED'
+        AND booked_count < capacity
+    `
+    if (reserved === 0) {
+      const lesson = await tx.publicLesson.findUnique({ where: { id: body.lessonId } })
+      if (!lesson) throw new Error('Lesson not found')
+      if (lesson.status !== 'SCHEDULED') throw new Error('Class is not available for booking')
+      throw new Error('Class is full')
+    }
     const lesson = await tx.publicLesson.findUnique({ where: { id: body.lessonId } })
     if (!lesson) throw new Error('Lesson not found')
-    if (lesson.booked_count >= lesson.capacity) throw new Error('Class is full')
-    await tx.publicLessonBooking.create({
+
+    const meta = { ...(body.meta || {}), subscription_id: sub.id }
+    const booking = await tx.publicLessonBooking.create({
       data: {
         lesson_id: body.lessonId,
         client_email: body.client_email.trim(),
         client_name: (body.client_name || '').trim(),
         client_user_id: body.client_user_id,
-        meta: body.meta ? (body.meta as Prisma.InputJsonValue) : Prisma.JsonNull,
+        meta: meta as Prisma.InputJsonValue,
       },
     })
-    await tx.publicLesson.update({
-      where: { id: body.lessonId },
-      data: { booked_count: { increment: 1 } },
-    })
+
+    subs[idx] = { ...sub, used_sessions: sub.used_sessions + 1 }
     await tx.studioClient.update({
       where: { id: body.client_user_id },
-      data: { subscriptions_json: body.subscriptions as Prisma.InputJsonValue },
+      data: { subscriptions_json: subs as Prisma.InputJsonValue },
     })
-  })
-}
 
-export async function cancelBookingRow(lessonId: string, email: string) {
-  await prisma.$transaction(async tx => {
-    const candidates = await tx.publicLessonBooking.findMany({ where: { lesson_id: lessonId } })
-    const booking = candidates.find(
-      b => b.client_email.trim().toLowerCase() === email.trim().toLowerCase()
-    )
-    if (!booking) throw new Error('Booking not found')
-    const meta = (booking.meta || {}) as ClientBookingMeta & { subscription_id?: string }
-    if (meta.subscription_id && booking.client_user_id) {
-      const client = await tx.studioClient.findUnique({ where: { id: booking.client_user_id } })
-      if (client) {
-        const subs = ((client.subscriptions_json as unknown as ClientSub[]) || []).map(s =>
-          s.id === meta.subscription_id
-            ? { ...s, used_sessions: Math.max(0, (s.used_sessions || 0) - 1) }
-            : s
-        )
-        await tx.studioClient.update({
-          where: { id: client.id },
-          data: { subscriptions_json: subs as Prisma.InputJsonValue },
-        })
-      }
-    }
-    const lessonRow = await tx.publicLesson.findUnique({ where: { id: lessonId } })
-    await tx.publicLessonBooking.delete({ where: { id: booking.id } })
-    await tx.publicLesson.update({
-      where: { id: lessonId },
-      data: { booked_count: Math.max(0, (lessonRow?.booked_count ?? 1) - 1) },
-    })
-  })
-}
-
-export async function getLessonForCancel(lessonId: string, email: string) {
-  const lesson = await prisma.publicLesson.findUnique({ where: { id: lessonId } })
-  if (!lesson) return null
-  if (!email) {
     return {
-      id: lesson.id,
-      class_name: lesson.class_name,
-      trainer_name: lesson.trainer_name,
-      start_timestamp: lesson.start_timestamp.toISOString(),
-      end_timestamp: lesson.end_timestamp.toISOString(),
-      capacity: lesson.capacity,
-      booked_count: lesson.booked_count,
-      status: lesson.status,
-      my_booking_email: '',
-      my_booking_name: '',
+      bookingId: booking.id,
+      className: lesson.class_name,
+      trainerName: lesson.trainer_name,
+      startTimestamp: lesson.start_timestamp,
+    }
+  })
+}
+
+export type CancelledBooking = {
+  className: string
+  trainerName: string
+  startTimestamp: Date
+  email: string
+  name: string
+}
+
+async function cancelBookingByIdInTx(
+  tx: Prisma.TransactionClient,
+  bookingId: string,
+): Promise<CancelledBooking | null> {
+  const booking = await tx.publicLessonBooking.findUnique({
+    where: { id: bookingId },
+    include: { lesson: true },
+  })
+  if (!booking) return null
+  const meta = (booking.meta || {}) as ClientBookingMeta
+  if (meta.subscription_id && booking.client_user_id) {
+    const client = await tx.studioClient.findUnique({ where: { id: booking.client_user_id } })
+    if (client) {
+      const subs = ((client.subscriptions_json as unknown as ClientSub[]) || []).map(s =>
+        s.id === meta.subscription_id
+          ? { ...s, used_sessions: Math.max(0, (s.used_sessions || 0) - 1) }
+          : s,
+      )
+      await tx.studioClient.update({
+        where: { id: client.id },
+        data: { subscriptions_json: subs as Prisma.InputJsonValue },
+      })
     }
   }
-  const list = await prisma.publicLessonBooking.findMany({ where: { lesson_id: lesson.id } })
-  const b = list.find(x => x.client_email.trim().toLowerCase() === email.trim().toLowerCase())
+  await tx.publicLessonBooking.delete({ where: { id: booking.id } })
+  await tx.publicLesson.updateMany({
+    where: { id: booking.lesson_id, booked_count: { gt: 0 } },
+    data: { booked_count: { decrement: 1 } },
+  })
+  return {
+    className: booking.lesson.class_name,
+    trainerName: booking.lesson.trainer_name,
+    startTimestamp: booking.lesson.start_timestamp,
+    email: booking.client_email,
+    name: booking.client_name,
+  }
+}
+
+/** Cancel by signed token (token IS the auth). */
+export async function cancelBookingByIdRow(bookingId: string): Promise<CancelledBooking> {
+  const result = await prisma.$transaction(tx => cancelBookingByIdInTx(tx, bookingId))
+  if (!result) throw new Error('Booking not found')
+  return result
+}
+
+/** Cancel by authenticated owner (uid or verified email match). */
+export async function cancelOwnedBookingRow(
+  lessonId: string,
+  owner: { userId: string; email: string },
+): Promise<CancelledBooking> {
+  return prisma.$transaction(async tx => {
+    const booking = await tx.publicLessonBooking.findFirst({
+      where: {
+        lesson_id: lessonId,
+        OR: [
+          { client_user_id: owner.userId },
+          { client_email: { equals: owner.email, mode: 'insensitive' } },
+        ],
+      },
+    })
+    if (!booking) throw new Error('Booking not found')
+    const result = await cancelBookingByIdInTx(tx, booking.id)
+    if (!result) throw new Error('Booking not found')
+    return result
+  })
+}
+
+export async function autoCancelLowAttendanceLessons(windowHours = 2) {
+  const now = new Date()
+  const cutoff = new Date(now.getTime() + windowHours * 60 * 60 * 1000)
+  const candidates = await prisma.publicLesson.findMany({
+    where: {
+      status: 'SCHEDULED',
+      start_timestamp: { gt: now, lte: cutoff },
+      booked_count: { lte: 1 },
+    },
+  })
+
+  const cancelled: Array<{
+    id: string
+    class_name: string
+    trainer_name: string
+    start_timestamp: Date
+    notifyEmails: Array<{ email: string; name: string }>
+  }> = []
+
+  for (const lesson of candidates) {
+    try {
+      const notifyEmails: Array<{ email: string; name: string }> = []
+      const committed = await prisma.$transaction(async tx => {
+        const flipped = await tx.publicLesson.updateMany({
+          where: { id: lesson.id, status: 'SCHEDULED', booked_count: { lte: 1 } },
+          data: { status: 'CANCELLED', booked_count: 0 },
+        })
+        if (flipped.count === 0) return false
+
+        const bookings = await tx.publicLessonBooking.findMany({ where: { lesson_id: lesson.id } })
+        for (const booking of bookings) {
+          const meta = (booking.meta || {}) as ClientBookingMeta
+          if (meta.subscription_id && booking.client_user_id) {
+            const client = await tx.studioClient.findUnique({ where: { id: booking.client_user_id } })
+            if (client) {
+              const subs = ((client.subscriptions_json as unknown as ClientSub[]) || []).map(s =>
+                s.id === meta.subscription_id
+                  ? { ...s, used_sessions: Math.max(0, (s.used_sessions || 0) - 1) }
+                  : s,
+              )
+              await tx.studioClient.update({
+                where: { id: client.id },
+                data: { subscriptions_json: subs as Prisma.InputJsonValue },
+              })
+            }
+          }
+          await tx.publicLessonBooking.delete({ where: { id: booking.id } })
+          notifyEmails.push({ email: booking.client_email, name: booking.client_name })
+        }
+        return true
+      })
+      if (committed) {
+        cancelled.push({
+          id: lesson.id,
+          class_name: lesson.class_name,
+          trainer_name: lesson.trainer_name,
+          start_timestamp: lesson.start_timestamp,
+          notifyEmails,
+        })
+      }
+    } catch (err) {
+      console.error('Auto-cancel: lesson failed, continuing', { lessonId: lesson.id, err })
+    }
+  }
+
+  return cancelled
+}
+
+/** Look up lesson + booking via signed token (no email exposure). */
+export async function getLessonForCancelByToken(bookingId: string) {
+  const booking = await prisma.publicLessonBooking.findUnique({
+    where: { id: bookingId },
+    include: { lesson: true },
+  })
+  if (!booking) return null
+  const lesson = booking.lesson
   return {
     id: lesson.id,
     class_name: lesson.class_name,
@@ -374,57 +677,67 @@ export async function getLessonForCancel(lessonId: string, email: string) {
     capacity: lesson.capacity,
     booked_count: lesson.booked_count,
     status: lesson.status,
-    is_booked_by_me: !!b,
-    my_booking_email: b?.client_email,
-    my_booking_name: b?.client_name,
+    is_booked_by_me: true,
+    my_booking_email: booking.client_email,
+    my_booking_name: booking.client_name,
   }
 }
 
+/**
+ * Atomic promo redemption. Locks studio_config row 1 with FOR UPDATE so two
+ * concurrent redemptions of the same code can't both pass the used-check.
+ */
 export async function redeemPromoRow(body: { code: string; clientId: string; clientEmail: string }) {
-  const cfg = await ensureStudioConfig()
-  const promos = asPromoArray(cfg.promo_codes_json) as Array<{
-    code: string
-    used?: boolean
-    plan_id: string
-    plan_name: string
-    sessions: number
-    duration_days: number
-    used_by?: string
-  }>
   const upper = body.code.trim().toUpperCase()
-  const promo = promos.find(p => p.code === upper)
-  if (!promo) throw new Error('Invalid code')
-  if (promo.used) throw new Error('Code already used')
-  const now = new Date()
-  const addDays = (d: Date, days: number) => {
-    const x = new Date(d)
-    x.setDate(x.getDate() + days)
-    return x
-  }
-  const newSub: ClientSub = {
-    id: Math.random().toString(36).slice(2, 11),
-    plan_id: promo.plan_id,
-    plan_name: `${promo.plan_name} (Подарунок)`,
-    total_sessions: promo.sessions,
-    used_sessions: 0,
-    purchased_at: now.toISOString(),
-    expires_at: addDays(now, promo.duration_days).toISOString(),
-    source: 'promo',
-  }
-  const client = await prisma.studioClient.findUnique({ where: { id: body.clientId } })
-  if (!client) throw new Error('Client not found')
-  const subs = ((client.subscriptions_json as unknown as ClientSub[]) || []).concat(newSub)
-  const nextPromos = promos.map(p =>
-    p.code === upper ? { ...p, used: true, used_by: body.clientEmail || client.email } : p
-  )
-  await prisma.$transaction([
-    prisma.studioClient.update({
+  await prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT 1 FROM studio_config WHERE id = 1 FOR UPDATE`
+    const cfg = await tx.studioConfig.findUnique({ where: { id: 1 } })
+    if (!cfg) throw new Error('Studio config missing')
+    const promos = asPromoArray(cfg.promo_codes_json) as Array<{
+      code: string
+      used?: boolean
+      plan_id: string
+      plan_name: string
+      sessions: number
+      duration_days: number
+      used_by?: string
+    }>
+    const promo = promos.find(p => p.code === upper)
+    if (!promo) throw new Error('Invalid code')
+    if (promo.used) throw new Error('Code already used')
+
+    const client = await tx.studioClient.findUnique({ where: { id: body.clientId } })
+    if (!client) throw new Error('Client not found')
+
+    const now = new Date()
+    const addDays = (d: Date, days: number) => {
+      const x = new Date(d)
+      x.setDate(x.getDate() + days)
+      return x
+    }
+    const newSub: ClientSub = {
+      id: Math.random().toString(36).slice(2, 11),
+      plan_id: promo.plan_id,
+      plan_name: `${promo.plan_name} (Подарунок)`,
+      total_sessions: promo.sessions,
+      used_sessions: 0,
+      purchased_at: now.toISOString(),
+      expires_at: addDays(now, promo.duration_days).toISOString(),
+      source: 'promo',
+    }
+
+    const subs = ((client.subscriptions_json as unknown as ClientSub[]) || []).concat(newSub)
+    const nextPromos = promos.map(p =>
+      p.code === upper ? { ...p, used: true, used_by: body.clientEmail || client.email } : p,
+    )
+
+    await tx.studioClient.update({
       where: { id: body.clientId },
       data: { subscriptions_json: subs as Prisma.InputJsonValue },
-    }),
-    prisma.studioConfig.update({
+    })
+    await tx.studioConfig.update({
       where: { id: 1 },
       data: { promo_codes_json: nextPromos as Prisma.InputJsonValue },
-    }),
-  ])
+    })
+  })
 }
