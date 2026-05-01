@@ -7,7 +7,7 @@ import { uk } from 'date-fns/locale'
 import domtoimage from 'dom-to-image-more'
 import {
   Calendar as CalendarIcon, Clock, Users, User,
-  AlertTriangle, X, LogOut, Phone, Camera, Plus, Database, Settings,
+  AlertTriangle, X, LogOut, Phone, Camera, Plus, Database, Settings, Pencil,
   CreditCard, Mail, Lock, ChevronDown, ChevronLeft, ChevronRight, Check, Crown, Eye, EyeOff,
   Ticket, Award, Star, BarChart3, TrendingUp, DollarSign, Wallet
 } from 'lucide-react'
@@ -103,11 +103,12 @@ interface PromoCode {
 
 /** Marks lessons the current client has a profile booking for (for UI / cancel link). */
 function mergeLessonsForViewer(lessons: ActualLesson[], client: Client | null): ActualLesson[] {
+  const visible = lessons.filter(l => l.status !== 'CANCELLED')
   if (!client) {
-    return lessons.map(l => ({ ...l, is_booked_by_me: false, my_booking_name: undefined, my_booking_email: undefined }))
+    return visible.map(l => ({ ...l, is_booked_by_me: false, my_booking_name: undefined, my_booking_email: undefined }))
   }
   const mine = new Set(client.bookings.map(b => b.lessonId))
-  return lessons.map(l => ({
+  return visible.map(l => ({
     ...l,
     is_booked_by_me: mine.has(l.id),
     my_booking_name: mine.has(l.id) ? client.name : undefined,
@@ -343,7 +344,7 @@ function ClientPage({ lessons, currentClient, onClientLogout, reloadAppData }: {
 
   const openCancelDialog = (lesson: ActualLesson) => {
     const hoursLeft = (lesson.start_timestamp.getTime() - Date.now()) / (1000 * 60 * 60)
-    setCancelBlocked(hoursLeft < 6)
+    setCancelBlocked(hoursLeft < 2)
     setCancelLesson(lesson)
   }
 
@@ -352,13 +353,7 @@ function ClientPage({ lessons, currentClient, onClientLogout, reloadAppData }: {
     setIsProcessingCancel(true)
     await new Promise(r => setTimeout(r, 400))
     try {
-      await studioApi.cancelBookingOnServer(cancelLesson.id, currentClient.email)
-      await studioApi.sendCancelBookingEmail({
-        email: currentClient.email,
-        clientName: currentClient.name || 'Гість',
-        className: cancelLesson.class_name,
-        startTime: format(cancelLesson.start_timestamp, 'd MMMM, HH:mm', { locale: uk }),
-      })
+      await studioApi.cancelBookingOnServer({ lessonId: cancelLesson.id })
       await reloadAppData()
     } catch (e) {
       console.error(e)
@@ -477,9 +472,9 @@ function ClientPage({ lessons, currentClient, onClientLogout, reloadAppData }: {
           </DialogHeader>
           <div className="py-2">
              {cancelBlocked ? (
-               <p className="text-sm text-red-200 bg-red-950/40 p-4 rounded-xl border border-red-500/25">Скасування неможливе — до початку заняття залишилось менше 6 годин.</p>
+               <p className="text-sm text-red-200 bg-red-950/40 p-4 rounded-xl border border-red-500/25">Скасування неможливе — до початку заняття залишилось менше 2 годин.</p>
              ) : (
-               <p className="text-sm text-amber-100 bg-amber-950/35 p-4 rounded-xl border border-amber-500/25">Більше ніж 6 годин. Буде ініційовано повернення коштів (Refund).</p>
+               <p className="text-sm text-amber-100 bg-amber-950/35 p-4 rounded-xl border border-amber-500/25">Більше ніж 2 години. Буде ініційовано повернення коштів (Refund).</p>
              )}
           </div>
           <DialogFooter>
@@ -523,23 +518,14 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
   // ── Single visit booking ──
   const handleBookSingle = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!currentClient) {
+      navigate(`/auth?redirect=/book/${lesson.id}`)
+      return
+    }
     setIsProcessing(true)
     try {
-      await studioApi.postBooking({
-        lessonId: lesson.id,
-        client_email: email,
-        client_name: name || 'Гість',
-        client_user_id: currentClient?.id ?? null,
-        meta: null,
-      })
-      await studioApi.sendBookingEmail({
-        email,
-        clientName: name || 'Гість',
-        className: lesson.class_name,
-        startTime: format(lesson.start_timestamp, 'd MMMM, HH:mm', { locale: uk }),
-        trainerName: lesson.trainer_name,
-        lessonId: lesson.id,
-      })
+      await studioApi.upsertStudioClient({ name: name || currentClient.name, phone: phone || currentClient.phone || '' })
+      await studioApi.postBooking({ lessonId: lesson.id, meta: null })
       await reloadAppData()
     } catch (err) {
       console.error(err)
@@ -571,12 +557,8 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
     const sessionRetailPerVisit =
       planForSub && planForSub.sessions > 0 ? planForSub.price / planForSub.sessions : undefined
 
-    const nextSubs = currentClient.subscriptions.map(s =>
-      s.id === sub.id ? { ...s, used_sessions: s.used_sessions + 1 } : s
-    )
     const meta: Record<string, unknown> = {
       subscription_kind: subscriptionKind,
-      subscription_id: sub.id,
       ...(sessionRetailPerVisit != null ? { subscription_session_value: sessionRetailPerVisit } : {}),
       ...(subscriptionKind === 'gift' && sessionRetailPerVisit != null ? { certificate_session_value: sessionRetailPerVisit } : {}),
     }
@@ -584,19 +566,8 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
     try {
       await studioApi.postBookingWithSubscription({
         lessonId: lesson.id,
-        client_user_id: currentClient.id,
-        client_email: currentClient.email,
-        client_name: currentClient.name,
-        subscriptions: nextSubs,
+        subscriptionId: sub.id,
         meta,
-      })
-      await studioApi.sendBookingEmail({
-        email: currentClient.email,
-        clientName: currentClient.name,
-        className: lesson.class_name,
-        startTime: format(lesson.start_timestamp, 'd MMMM, HH:mm', { locale: uk }),
-        trainerName: lesson.trainer_name,
-        lessonId: lesson.id,
       })
       await reloadAppData()
     } catch (err) {
@@ -627,7 +598,7 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
     }
     const next = [...currentClient.subscriptions, newSub]
     try {
-      await studioApi.putClientSubscriptions(currentClient.id, next)
+      await studioApi.putClientSubscriptions(next)
       await reloadAppData()
     } catch (e) {
       console.error(e)
@@ -712,7 +683,13 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
                 {/* Single Visit Card */}
                 <Card
                   className="cursor-pointer border-2 border-transparent hover:border-border hover:shadow-md transition-all group"
-                  onClick={() => setStep('single_form')}
+                  onClick={() => {
+                    if (!currentClient) {
+                      navigate(`/auth?redirect=/book/${lesson.id}`)
+                    } else {
+                      setStep('single_form')
+                    }
+                  }}
                 >
                   <CardContent className="p-6 space-y-4">
                     <div className="w-14 h-14 rounded-2xl bg-muted text-muted-foreground flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -720,7 +697,7 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
                     </div>
                     <div>
                       <h3 className="font-bold text-lg text-foreground">Одноразовий візит</h3>
-                      <p className="text-sm text-muted-foreground mt-1">Без реєстрації. Просто заповніть форму.</p>
+                      <p className="text-sm text-muted-foreground mt-1">{currentClient ? 'Заповніть форму та підтвердіть запис.' : 'Потрібна авторизація'}</p>
                     </div>
                     <div className="flex items-baseline gap-1">
                       <span className="text-2xl font-black text-foreground">{SINGLE_VISIT_PRICE}</span>
@@ -924,7 +901,7 @@ function CancelBookingPage({ reloadAppData }: { reloadAppData: () => Promise<voi
   const { id } = useParams()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const emailFromLink = searchParams.get('email') || ''
+  const tokenFromLink = searchParams.get('token') || ''
   const [lesson, setLesson] = useState<ActualLesson | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loadingLesson, setLoadingLesson] = useState(true)
@@ -932,14 +909,15 @@ function CancelBookingPage({ reloadAppData }: { reloadAppData: () => Promise<voi
   const [isCancelled, setIsCancelled] = useState(false)
 
   useEffect(() => {
-    if (!id) {
+    if (!id || !tokenFromLink) {
       setLoadingLesson(false)
+      setLoadError('Посилання недійсне або застаріле.')
       return
     }
     let cancelled = false
     ;(async () => {
       try {
-        const { lesson: raw } = await studioApi.fetchLessonForCancel(id, emailFromLink)
+        const { lesson: raw } = await studioApi.fetchLessonForCancel({ lessonId: id, token: tokenFromLink })
         if (cancelled) return
         const L: ActualLesson = {
           id: raw.id,
@@ -963,7 +941,7 @@ function CancelBookingPage({ reloadAppData }: { reloadAppData: () => Promise<voi
       }
     })()
     return () => { cancelled = true }
-  }, [id, emailFromLink])
+  }, [id, tokenFromLink])
 
   if (loadingLesson && !isCancelled) {
     return (
@@ -988,24 +966,21 @@ function CancelBookingPage({ reloadAppData }: { reloadAppData: () => Promise<voi
     )
   }
 
+  const hoursLeft = lesson ? (lesson.start_timestamp.getTime() - Date.now()) / (1000 * 60 * 60) : Infinity
+  const cancelBlocked = hoursLeft < 2
+
   const handleCancelClick = async () => {
-    if (!lesson?.my_booking_email) return
+    if (!lesson?.my_booking_email || cancelBlocked) return
     setIsProcessing(true)
     try {
-      await studioApi.cancelBookingOnServer(lesson.id, lesson.my_booking_email)
-      await studioApi.sendCancelBookingEmail({
-        email: lesson.my_booking_email,
-        clientName: lesson.my_booking_name || 'Гість',
-        className: lesson.class_name,
-        startTime: format(lesson.start_timestamp, 'd MMMM, HH:mm', { locale: uk }),
-      })
+      await studioApi.cancelBookingOnServer({ lessonId: lesson.id, token: tokenFromLink })
       await reloadAppData()
+      setIsCancelled(true)
     } catch (e) {
       console.error(e)
       alert('Не вдалося скасувати. Спробуйте пізніше.')
     }
     setIsProcessing(false)
-    setIsCancelled(true)
   }
 
   if (isCancelled) {
@@ -1038,7 +1013,12 @@ function CancelBookingPage({ reloadAppData }: { reloadAppData: () => Promise<voi
               <hr className="my-2" />
               <p className="text-xs text-muted-foreground/90">Пошта: {lesson?.my_booking_email}</p>
             </div>
-            <Button variant="destructive" className="w-full h-11 text-base font-semibold" disabled={isProcessing} onClick={handleCancelClick}>
+            {cancelBlocked && (
+              <p className="text-sm text-red-200 bg-red-950/40 p-4 rounded-xl border border-red-500/25 mb-4">
+                Скасування неможливе — до початку заняття залишилось менше 2 годин.
+              </p>
+            )}
+            <Button variant="destructive" className="w-full h-11 text-base font-semibold" disabled={isProcessing || cancelBlocked} onClick={handleCancelClick}>
               {isProcessing ? 'Скасування...' : 'Так, скасувати запис'}
             </Button>
             <Button variant="ghost" className="w-full mt-2 text-muted-foreground" disabled={isProcessing} onClick={() => navigate('/')}>Повернутись</Button>
@@ -1081,8 +1061,6 @@ function AuthPage({ setCurrentClientId, reloadAppData }: {
     const { data: profile } = await supabase.from('User').select('*').eq('id', data.user.id).single()
     if (profile) {
       await studioApi.upsertStudioClient({
-        id: profile.id,
-        email: profile.email,
         name: profile.name,
         phone: profile.phone || '',
       })
@@ -1107,7 +1085,7 @@ function AuthPage({ setCurrentClientId, reloadAppData }: {
     const userId = data.user!.id
     // 2. Insert profile into User table
     await supabase.from('User').insert({ id: userId, email, name, phone, role: 'CLIENT' })
-    await studioApi.upsertStudioClient({ id: userId, email, name, phone: phone || '' })
+    await studioApi.upsertStudioClient({ name, phone: phone || '' })
     await reloadAppData()
     setCurrentClientId(userId)
     setLoading(false)
@@ -1253,7 +1231,7 @@ function ClientDashboardPage({ currentClient, onClientLogout, plans, promoCodes,
       source: 'purchase',
     }
     try {
-      await studioApi.putClientSubscriptions(currentClient.id, [...currentClient.subscriptions, newSub])
+      await studioApi.putClientSubscriptions([...currentClient.subscriptions, newSub])
       await reloadAppData()
     } catch (e) {
       console.error(e)
@@ -1272,11 +1250,7 @@ function ClientDashboardPage({ currentClient, onClientLogout, plans, promoCodes,
     if (!promo) { setPromoError('Невірний код. Перевірте правильність.'); return }
     if (promo.used) { setPromoError('Цей код вже використаний.'); return }
     try {
-      await studioApi.redeemPromoOnServer({
-        code,
-        clientId: currentClient.id,
-        clientEmail: currentClient.email,
-      })
+      await studioApi.redeemPromoOnServer({ code })
       await reloadAppData()
       setPromoInput('')
       setPromoSuccess(`Абонемент "${promo.plan_name}" успішно активовано!`)
@@ -2714,6 +2688,11 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData }: { l
   const [newLessonTrainer, setNewLessonTrainer] = useState(trainers[0] || 'Тренер')
   const [newLessonTime, setNewLessonTime] = useState('18:00')
 
+  const [editingLesson, setEditingLesson] = useState<ActualLesson | null>(null)
+  const [editLessonName, setEditLessonName] = useState('')
+  const [editLessonTrainer, setEditLessonTrainer] = useState('')
+  const [editLessonTime, setEditLessonTime] = useState('')
+
   const actDate = selectedDate || new Date()
   const weekStart = startOfWeek(actDate, { weekStartsOn: 1 })
   const weekEnd = endOfWeek(actDate, { weekStartsOn: 1 })
@@ -2743,6 +2722,36 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData }: { l
       return
     }
     setIsAddLessonOpen(false)
+  }
+
+  const openEditLesson = (l: ActualLesson) => {
+    setEditingLesson(l)
+    setEditLessonName(l.class_name)
+    setEditLessonTrainer(l.trainer_name)
+    setEditLessonTime(format(l.start_timestamp, 'HH:mm'))
+  }
+
+  const handleEditLesson = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingLesson) return
+    const [h, m] = editLessonTime.split(':').map(Number)
+    const start = makeDate(editingLesson.start_timestamp, h, m)
+    const durationMs = editingLesson.end_timestamp.getTime() - editingLesson.start_timestamp.getTime()
+    const end = new Date(start.getTime() + durationMs)
+    try {
+      await studioApi.updateLessonOnServer(editingLesson.id, {
+        class_name: editLessonName,
+        trainer_name: editLessonTrainer,
+        start_timestamp: start.toISOString(),
+        end_timestamp: end.toISOString(),
+      })
+      await reloadAppData()
+    } catch (err) {
+      console.error(err)
+      alert(err instanceof Error ? err.message : 'Не вдалося оновити заняття')
+      return
+    }
+    setEditingLesson(null)
   }
 
   const handleExportPhoto = async () => {
@@ -2898,16 +2907,23 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData }: { l
                  <p className={cn("text-xs", isTodayLoc ? "text-brand-gold font-bold" : "text-muted-foreground/90")}>{format(day, 'dd MMMM', {locale: uk})}</p>
               </CardHeader>
               <CardContent className="p-2 flex-1 flex flex-col gap-2 overflow-y-auto min-h-[300px]">
-                {dayLessons.map(l => (
-                  <div key={l.id} className="p-2 rounded-lg border border-border bg-card text-xs hover:border-brand-gold/50 transition-colors group relative">
-                    <p className="font-bold text-foreground leading-tight">{l.class_name}</p>
+                {dayLessons.map(l => {
+                  const isCancelled = l.status === 'CANCELLED'
+                  return (
+                  <div key={l.id} className={cn("p-2 rounded-lg border border-border bg-card text-xs hover:border-brand-gold/50 transition-colors group relative", isCancelled && "opacity-60")}>
+                    <p className={cn("font-bold text-foreground leading-tight pr-12", isCancelled && "line-through")}>{l.class_name}</p>
                     <p className="text-muted-foreground mt-1 font-medium">{format(l.start_timestamp, 'HH:mm')} - {format(l.end_timestamp, 'HH:mm')}</p>
                     <p className="text-muted-foreground/90 mt-0.5">{l.trainer_name}</p>
-                    <button type="button" onClick={() => { if (confirm('Видалити заняття?')) void (async () => { try { await studioApi.deleteLessonOnServer(l.id); await reloadAppData() } catch (e) { console.error(e); alert('Не вдалося видалити') } })() }} className="absolute top-1 right-1 w-5 h-5 rounded-md bg-red-950/60 text-red-300 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    {isCancelled && <p className="mt-1 text-[10px] uppercase tracking-wide text-red-400 font-bold">Скасовано</p>}
+                    <button type="button" aria-label="Редагувати заняття" onClick={() => openEditLesson(l)} className="absolute top-1 right-7 w-5 h-5 rounded-md bg-brand-gold/15 text-brand-gold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-brand-gold/25">
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                    <button type="button" aria-label="Видалити заняття" onClick={() => { if (confirm('Видалити заняття?')) void (async () => { try { await studioApi.deleteLessonOnServer(l.id); await reloadAppData() } catch (e) { console.error(e); alert('Не вдалося видалити') } })() }} className="absolute top-1 right-1 w-5 h-5 rounded-md bg-red-950/60 text-red-300 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                       <X className="w-3 h-3" />
                     </button>
                   </div>
-                ))}
+                  )
+                })}
 
                 <div className="mt-auto pt-2">
                   <Button variant="ghost" className="w-full h-8 text-xs border border-dashed border-border text-muted-foreground hover:text-brand-gold hover:bg-brand-gold/10 hover:border-brand-gold/40"
@@ -2960,6 +2976,47 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData }: { l
             </div>
             <Button type="submit" variant="brand" className="w-full">Створити заняття</Button>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog for Editing class */}
+      <Dialog open={!!editingLesson} onOpenChange={(open) => { if (!open) setEditingLesson(null) }}>
+        <DialogContent>
+          {editingLesson && (
+            <form onSubmit={handleEditLesson} className="space-y-4">
+              <DialogHeader>
+                <DialogTitle>Редагувати заняття</DialogTitle>
+                <p className="text-sm text-muted-foreground">{format(editingLesson.start_timestamp, 'dd MMMM yyyy', { locale: uk })}</p>
+              </DialogHeader>
+              <div>
+                <label className="text-sm font-medium">Назва заняття</label>
+                {classTypes.length > 0 ? (
+                  <select required value={editLessonName} onChange={e => setEditLessonName(e.target.value)} className={inputClasses}>
+                    {!classTypes.includes(editLessonName) && <option value={editLessonName}>{editLessonName}</option>}
+                    {classTypes.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                ) : (
+                  <input required value={editLessonName} onChange={e => setEditLessonName(e.target.value)} className={inputClasses} />
+                )}
+              </div>
+              <div>
+                <label className="text-sm font-medium">Час початку</label>
+                <input required type="time" value={editLessonTime} onChange={e => setEditLessonTime(e.target.value)} className={inputClasses} />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Тренер</label>
+                {trainers.length > 0 ? (
+                  <select required value={editLessonTrainer} onChange={e => setEditLessonTrainer(e.target.value)} className={inputClasses}>
+                    {!trainers.includes(editLessonTrainer) && <option value={editLessonTrainer}>{editLessonTrainer}</option>}
+                    {trainers.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                ) : (
+                  <input required value={editLessonTrainer} onChange={e => setEditLessonTrainer(e.target.value)} className={inputClasses} />
+                )}
+              </div>
+              <Button type="submit" variant="brand" className="w-full">Зберегти зміни</Button>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
     </div>
@@ -3049,8 +3106,6 @@ export default function App() {
       const { data: profile } = await supabase.from('User').select('*').eq('id', uid).single()
       if (profile) {
         await studioApi.upsertStudioClient({
-          id: profile.id,
-          email: profile.email,
           name: profile.name,
           phone: profile.phone || '',
         })

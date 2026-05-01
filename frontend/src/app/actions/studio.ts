@@ -1,23 +1,29 @@
 'use server'
 
-import { cookies } from 'next/headers'
-import nodemailer from 'nodemailer'
-import { verifyAdminSessionToken } from '@/lib/admin-crypto'
-import { getSupabaseUserId } from '@/lib/supabase/server-user'
-import { publicSiteUrl } from '@/lib/site-url'
+import { cookies, headers } from 'next/headers'
+import {
+  signBookingCancelToken,
+  verifyAdminSessionToken,
+  verifyBookingCancelToken,
+} from '@/lib/admin-crypto'
+import { sendBookingConfirmationEmail, sendBookingCancelledByClientEmail } from '@/lib/mailer'
+import { clientIpFromHeaders, rateLimit } from '@/lib/rate-limit'
+import { getSupabaseUser, getSupabaseUserId } from '@/lib/supabase/server-user'
 import {
   getBootstrapData,
   updateStudioConfigPartial,
   createLesson,
   deleteLessonById,
+  updateLessonById,
   upsertStudioClientRow,
   putClientSubscriptionsRow,
   postBookingRow,
   postBookingWithSubscriptionRow,
-  cancelBookingRow,
-  getLessonForCancel,
+  cancelBookingByIdRow,
+  cancelOwnedBookingRow,
+  getLessonForCancelByToken,
   redeemPromoRow,
-  type ClientSub,
+  ensureStudioClientForUser,
 } from '@/lib/studio-logic'
 
 const ADMIN_COOKIE = 'brave_admin'
@@ -31,14 +37,17 @@ async function assertAdmin() {
   if (!(await readAdminCookie())) throw new Error('Unauthorized: admin session required')
 }
 
-function mailer() {
-  const user = process.env.SMTP_EMAIL
-  const pass = process.env.SMTP_PASSWORD
-  if (!user || !pass) throw new Error('SMTP_EMAIL / SMTP_PASSWORD not configured')
-  return nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user, pass },
-  })
+async function requireUser() {
+  const u = await getSupabaseUser()
+  if (!u) throw new Error('Unauthorized')
+  return u
+}
+
+async function rateLimitByIp(key: string, max: number, windowMs: number) {
+  const ip = clientIpFromHeaders(await headers())
+  if (!rateLimit(`${key}:${ip}`, max, windowMs)) {
+    throw new Error('Too many requests. Try again shortly.')
+  }
 }
 
 export async function bootstrapStudioAction() {
@@ -70,123 +79,153 @@ export async function deleteLessonAction(id: string) {
   return { ok: true as const }
 }
 
-export async function upsertStudioClientAction(body: { id: string; email: string; name: string; phone: string }) {
-  const uid = await getSupabaseUserId()
-  if (!uid || uid !== body.id) throw new Error('Unauthorized')
-  await upsertStudioClientRow(body)
+export async function updateLessonAction(id: string, data: Parameters<typeof updateLessonById>[1]) {
+  await assertAdmin()
+  await updateLessonById(id, data)
   return { ok: true as const }
 }
 
-export async function putClientSubscriptionsAction(clientId: string, subscriptions: unknown[]) {
-  const uid = await getSupabaseUserId()
-  if (!uid || uid !== clientId) throw new Error('Unauthorized')
-  await putClientSubscriptionsRow(clientId, subscriptions)
+/** Verified email is taken from the auth session — body.email is ignored to prevent email-hijack. */
+export async function upsertStudioClientAction(body: { name: string; phone: string }) {
+  const user = await requireUser()
+  await upsertStudioClientRow({
+    id: user.id,
+    email: user.email,
+    name: body.name,
+    phone: body.phone,
+  })
   return { ok: true as const }
 }
 
-export async function postBookingAction(body: Parameters<typeof postBookingRow>[0]) {
-  if (body.client_user_id) {
-    const uid = await getSupabaseUserId()
-    if (!uid || uid !== body.client_user_id) throw new Error('Unauthorized')
-  }
-  const bookingId = await postBookingRow(body)
-  return { ok: true as const, bookingId }
+export async function putClientSubscriptionsAction(subscriptions: unknown[]) {
+  const user = await requireUser()
+  await putClientSubscriptionsRow(user.id, subscriptions)
+  return { ok: true as const }
+}
+
+/**
+ * Authenticated single-visit booking. Identity is read from the Supabase session;
+ * caller-supplied email/name/user_id are ignored. Server sends the confirmation email.
+ */
+export async function postBookingAction(body: { lessonId: string; meta?: Record<string, unknown> | null }) {
+  const user = await requireUser()
+  await rateLimitByIp('book', 10, 60_000)
+  const sc = await ensureStudioClientForUser(user)
+  const created = await postBookingRow({
+    lessonId: body.lessonId,
+    client_email: sc.email,
+    client_name: sc.name,
+    client_user_id: user.id,
+    meta: body.meta ?? null,
+  })
+  await trySendBookingEmail({
+    to: sc.email,
+    clientName: sc.name || 'Гість',
+    className: created.className,
+    startTimestamp: created.startTimestamp,
+    trainerName: created.trainerName,
+    lessonId: body.lessonId,
+    bookingId: created.bookingId,
+  })
+  return { ok: true as const, bookingId: created.bookingId }
 }
 
 export async function postBookingWithSubscriptionAction(body: {
   lessonId: string
-  client_user_id: string
-  client_email: string
-  client_name: string
-  subscriptions: ClientSub[]
+  subscriptionId: string
   meta?: Record<string, unknown> | null
 }) {
-  const uid = await getSupabaseUserId()
-  if (!uid || uid !== body.client_user_id) throw new Error('Unauthorized')
-  await postBookingWithSubscriptionRow(body)
+  const user = await requireUser()
+  await rateLimitByIp('book', 10, 60_000)
+  const sc = await ensureStudioClientForUser(user)
+  const created = await postBookingWithSubscriptionRow({
+    lessonId: body.lessonId,
+    client_user_id: user.id,
+    client_email: sc.email,
+    client_name: sc.name,
+    subscriptionId: body.subscriptionId,
+    meta: body.meta ?? null,
+  })
+  await trySendBookingEmail({
+    to: sc.email,
+    clientName: sc.name || 'Гість',
+    className: created.className,
+    startTimestamp: created.startTimestamp,
+    trainerName: created.trainerName,
+    lessonId: body.lessonId,
+    bookingId: created.bookingId,
+  })
+  return { ok: true as const, bookingId: created.bookingId }
+}
+
+export async function cancelBookingAction(args: {
+  lessonId: string
+  /** Signed cancel token from the confirmation email. When omitted, the caller must be the booking's owner. */
+  token?: string
+}) {
+  let cancelled
+  if (args.token) {
+    const verified = verifyBookingCancelToken(args.token, args.lessonId)
+    if (!verified) throw new Error('Invalid or expired cancel link')
+    cancelled = await cancelBookingByIdRow(verified.bookingId)
+  } else {
+    const user = await requireUser()
+    cancelled = await cancelOwnedBookingRow(args.lessonId, { userId: user.id, email: user.email })
+  }
+  const hoursLeft = (cancelled.startTimestamp.getTime() - Date.now()) / (1000 * 60 * 60)
+  if (hoursLeft < 2) {
+    // Already committed — reverse is unsafe; keep the cancellation. Surface a warning.
+    console.warn('Cancellation processed within 2h window', { lessonId: args.lessonId })
+  }
+  try {
+    await sendBookingCancelledByClientEmail({
+      to: cancelled.email,
+      clientName: cancelled.name || 'Гість',
+      className: cancelled.className,
+      startTimestamp: cancelled.startTimestamp,
+    })
+  } catch (err) {
+    console.error('Cancel email failed', err)
+  }
   return { ok: true as const }
 }
 
-export async function cancelBookingAction(lessonId: string, email: string) {
-  await cancelBookingRow(lessonId, email)
-  return { ok: true as const }
-}
-
-export async function fetchLessonForCancelAction(lessonId: string, email: string) {
-  const lesson = await getLessonForCancel(lessonId, email)
+export async function fetchLessonForCancelAction(args: { lessonId: string; token: string }) {
+  const verified = verifyBookingCancelToken(args.token, args.lessonId)
+  if (!verified) throw new Error('Invalid or expired cancel link')
+  const lesson = await getLessonForCancelByToken(verified.bookingId)
   if (!lesson) throw new Error('Not found')
   return { lesson }
 }
 
-export async function redeemPromoAction(body: { code: string; clientId: string; clientEmail: string }) {
-  const uid = await getSupabaseUserId()
-  if (!uid || uid !== body.clientId) throw new Error('Unauthorized')
-  await redeemPromoRow(body)
+export async function redeemPromoAction(body: { code: string }) {
+  const user = await requireUser()
+  await redeemPromoRow({ code: body.code, clientId: user.id, clientEmail: user.email })
   return { ok: true as const }
 }
 
-export async function sendBookingEmailAction(payload: {
-  email: string
+async function trySendBookingEmail(args: {
+  to: string
   clientName: string
   className: string
-  startTime: string
+  startTimestamp: Date
   trainerName: string
   lessonId: string
+  bookingId: string
 }) {
-  if (!payload.email) throw new Error('Email is required')
-  const base = publicSiteUrl()
-  const transporter = mailer()
-  await transporter.sendMail({
-    from: `"Brave! Yoga" <${process.env.SMTP_EMAIL}>`,
-    to: payload.email,
-    subject: `Підтвердження запису: ${payload.className}`,
-    html: `
-      <div style="font-family: 'Inter', system-ui, -apple-system, sans-serif; max-width: 600px; margin: 0 auto; color: #1E293B; background-color: #FAFAFA; padding: 40px 20px; border-radius: 16px;">
-        <div style="text-align: center; margin-bottom: 30px;">
-          <h1 style="font-size: 32px; font-weight: 900; margin: 0; color: #0F172A; letter-spacing: -1px;"><i style="font-family: 'Georgia', serif; color: #DDA343;">Brave!</i> Yoga</h1>
-          <p style="color: #64748B; font-size: 14px; margin-top: 5px; text-transform: uppercase; letter-spacing: 2px;">Студія твого балансу</p>
-        </div>
-        <div style="background: white; border-radius: 16px; padding: 30px; box-shadow: 0 4px 20px rgba(0,0,0,0.03); border: 1px solid #F1F5F9;">
-          <h2 style="font-size: 20px; color: #0F172A; margin-top: 0;">Привіт, ${payload.clientName}! 👋</h2>
-          <p style="font-size: 16px; color: #475569; line-height: 1.5;">Ми щасливі підтвердити ваш запис на тренування.</p>
-          <div style="margin: 25px 0; border: 1px dashed #CBD5E1; border-radius: 12px; padding: 20px; background-color: #F8FAFC;">
-            <p style="margin: 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: 600;">Заняття</p>
-            <p style="margin: 4px 0 0 0; font-size: 18px; color: #0F172A; font-weight: 700;">${payload.className}</p>
-            <p style="margin: 12px 0 0 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: 600;">Час</p>
-            <p style="margin: 4px 0 0 0; font-size: 16px; color: #0F172A; font-weight: 600;">${payload.startTime}</p>
-            <p style="margin: 12px 0 0 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: 600;">Тренер</p>
-            <p style="margin: 4px 0 0 0; font-size: 16px; color: #0F172A; font-weight: 600;">${payload.trainerName}</p>
-          </div>
-          <p style="font-size: 14px; color: #64748B; line-height: 1.5; text-align: center; margin: 30px 0 15px 0;">Змінилися плани? Попередьте нас заздалегідь!</p>
-          <div style="text-align: center;">
-            <a href="${base}/cancel/${payload.lessonId}?email=${encodeURIComponent(payload.email)}" style="display: inline-block; padding: 14px 28px; background-color: #FEF2F2; color: #DC2626; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px; border: 1px solid #FEE2E2;">Скасувати бронювання</a>
-          </div>
-        </div>
-      </div>
-    `,
-  })
-  return { ok: true as const }
+  try {
+    const cancelToken = signBookingCancelToken(args.bookingId, args.lessonId)
+    await sendBookingConfirmationEmail({
+      to: args.to,
+      clientName: args.clientName,
+      className: args.className,
+      startTimestamp: args.startTimestamp,
+      trainerName: args.trainerName,
+      lessonId: args.lessonId,
+      cancelToken,
+    })
+  } catch (err) {
+    console.error('Booking email failed', err)
+  }
 }
 
-export async function sendCancelBookingEmailAction(payload: {
-  email: string
-  clientName: string
-  className: string
-  startTime: string
-}) {
-  if (!payload.email) throw new Error('Email is required')
-  const transporter = mailer()
-  await transporter.sendMail({
-    from: `"Brave! Yoga" <${process.env.SMTP_EMAIL}>`,
-    to: payload.email,
-    subject: `Скасування запису: ${payload.className}`,
-    html: `
-      <div style="font-family: 'Inter', system-ui, sans-serif; max-width: 600px; margin: 0 auto; color: #1E293B; background-color: #FAFAFA; padding: 40px 20px; border-radius: 16px;">
-        <h2 style="text-align:center;">Запис скасовано</h2>
-        <p style="text-align:center;">Привіт, ${payload.clientName}! Ваш запис скасовано.</p>
-        <p style="text-align:center;"><b>${payload.className}</b><br/>${payload.startTime}</p>
-      </div>
-    `,
-  })
-  return { ok: true as const }
-}

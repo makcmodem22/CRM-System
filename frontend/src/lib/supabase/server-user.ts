@@ -2,8 +2,8 @@ import 'server-only'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 
-/** Logged-in Supabase Auth user id (server-side, cookie session). */
-export async function getSupabaseUserId(): Promise<string | null> {
+/** Logged-in Supabase Auth user (server-side, cookie session). */
+export async function getSupabaseUser(): Promise<{ id: string; email: string } | null> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   if (!url || !anon) return null
@@ -26,5 +26,11 @@ export async function getSupabaseUserId(): Promise<string | null> {
   const {
     data: { user },
   } = await supabase.auth.getUser()
-  return user?.id ?? null
+  if (!user?.id || !user.email) return null
+  return { id: user.id, email: user.email }
+}
+
+export async function getSupabaseUserId(): Promise<string | null> {
+  const u = await getSupabaseUser()
+  return u?.id ?? null
 }
