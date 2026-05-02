@@ -2675,7 +2675,7 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
 }
 
 // ── Page: Admin Schedule Builder ─────────────────────────────────────────────
-function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData }: { lessons: ActualLesson[], trainers: string[], classTypes: string[], reloadAppData: () => Promise<void> }) {
+function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData, setLessons }: { lessons: ActualLesson[], trainers: string[], classTypes: string[], reloadAppData: () => Promise<void>, setLessons: React.Dispatch<React.SetStateAction<ActualLesson[]>> }) {
   const navigate = useNavigate()
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date())
   const [weekPickerOpen, setWeekPickerOpen] = useState(false)
@@ -2699,29 +2699,42 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData }: { l
   const weekDays = eachDayOfInterval({ start: weekStart, end: weekEnd })
   const weeklyLessons = lessons.filter(l => l.start_timestamp >= weekStart && l.start_timestamp <= weekEnd)
 
-  const handleAddLesson = async (e: React.FormEvent) => {
+  const handleAddLesson = (e: React.FormEvent) => {
     e.preventDefault()
     const [h,m] = newLessonTime.split(':').map(Number)
     const start = makeDate(targetDateForNewLesson, h, m)
     const end = makeDate(targetDateForNewLesson, h + 1, m)
     const id = Math.random().toString(36).slice(2, 12)
-    try {
-      await studioApi.createLessonOnServer({
-        id,
-        class_name: newLessonName,
-        trainer_name: newLessonTrainer,
-        start_timestamp: start.toISOString(),
-        end_timestamp: end.toISOString(),
-        capacity: 10,
-        status: 'SCHEDULED',
-      })
-      await reloadAppData()
-    } catch (err) {
-      console.error(err)
-      alert(err instanceof Error ? err.message : 'Не вдалося зберегти заняття')
-      return
+    const optimistic: ActualLesson = {
+      id,
+      class_name: newLessonName,
+      trainer_name: newLessonTrainer,
+      start_timestamp: start,
+      end_timestamp: end,
+      capacity: 10,
+      booked_count: 0,
+      status: 'SCHEDULED',
     }
+    setLessons(prev => [...prev, optimistic])
     setIsAddLessonOpen(false)
+    void (async () => {
+      try {
+        await studioApi.createLessonOnServer({
+          id,
+          class_name: optimistic.class_name,
+          trainer_name: optimistic.trainer_name,
+          start_timestamp: start.toISOString(),
+          end_timestamp: end.toISOString(),
+          capacity: optimistic.capacity,
+          status: 'SCHEDULED',
+        })
+        await reloadAppData()
+      } catch (err) {
+        console.error(err)
+        setLessons(prev => prev.filter(l => l.id !== id))
+        alert(err instanceof Error ? err.message : 'Не вдалося зберегти заняття')
+      }
+    })()
   }
 
   const openEditLesson = (l: ActualLesson) => {
@@ -2731,27 +2744,37 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData }: { l
     setEditLessonTime(format(l.start_timestamp, 'HH:mm'))
   }
 
-  const handleEditLesson = async (e: React.FormEvent) => {
+  const handleEditLesson = (e: React.FormEvent) => {
     e.preventDefault()
     if (!editingLesson) return
+    const original = editingLesson
     const [h, m] = editLessonTime.split(':').map(Number)
-    const start = makeDate(editingLesson.start_timestamp, h, m)
-    const durationMs = editingLesson.end_timestamp.getTime() - editingLesson.start_timestamp.getTime()
+    const start = makeDate(original.start_timestamp, h, m)
+    const durationMs = original.end_timestamp.getTime() - original.start_timestamp.getTime()
     const end = new Date(start.getTime() + durationMs)
-    try {
-      await studioApi.updateLessonOnServer(editingLesson.id, {
-        class_name: editLessonName,
-        trainer_name: editLessonTrainer,
-        start_timestamp: start.toISOString(),
-        end_timestamp: end.toISOString(),
-      })
-      await reloadAppData()
-    } catch (err) {
-      console.error(err)
-      alert(err instanceof Error ? err.message : 'Не вдалося оновити заняття')
-      return
+    const updates = {
+      class_name: editLessonName,
+      trainer_name: editLessonTrainer,
+      start_timestamp: start,
+      end_timestamp: end,
     }
+    setLessons(prev => prev.map(l => l.id === original.id ? { ...l, ...updates } : l))
     setEditingLesson(null)
+    void (async () => {
+      try {
+        await studioApi.updateLessonOnServer(original.id, {
+          class_name: updates.class_name,
+          trainer_name: updates.trainer_name,
+          start_timestamp: start.toISOString(),
+          end_timestamp: end.toISOString(),
+        })
+        await reloadAppData()
+      } catch (err) {
+        console.error(err)
+        setLessons(prev => prev.map(l => l.id === original.id ? original : l))
+        alert(err instanceof Error ? err.message : 'Не вдалося оновити заняття')
+      }
+    })()
   }
 
   const handleExportPhoto = async () => {
@@ -2914,11 +2937,12 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData }: { l
                     <p className={cn("font-bold text-foreground leading-tight pr-12", isCancelled && "line-through")}>{l.class_name}</p>
                     <p className="text-muted-foreground mt-1 font-medium">{format(l.start_timestamp, 'HH:mm')} - {format(l.end_timestamp, 'HH:mm')}</p>
                     <p className="text-muted-foreground/90 mt-0.5">{l.trainer_name}</p>
+                    <p className="text-muted-foreground/90 mt-0.5 flex items-center gap-1"><Users className="w-3 h-3" />{l.booked_count} / {l.capacity}</p>
                     {isCancelled && <p className="mt-1 text-[10px] uppercase tracking-wide text-red-400 font-bold">Скасовано</p>}
-                    <button type="button" aria-label="Редагувати заняття" onClick={() => openEditLesson(l)} className="absolute top-1 right-7 w-5 h-5 rounded-md bg-brand-gold/15 text-brand-gold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-brand-gold/25">
+                    <button type="button" aria-label="Редагувати заняття" onClick={() => openEditLesson(l)} className="absolute top-1 right-7 w-5 h-5 rounded-md bg-brand-gold/15 text-brand-gold flex items-center justify-center hover:bg-brand-gold/25">
                       <Pencil className="w-3 h-3" />
                     </button>
-                    <button type="button" aria-label="Видалити заняття" onClick={() => { if (confirm('Видалити заняття?')) void (async () => { try { await studioApi.deleteLessonOnServer(l.id); await reloadAppData() } catch (e) { console.error(e); alert('Не вдалося видалити') } })() }} className="absolute top-1 right-1 w-5 h-5 rounded-md bg-red-950/60 text-red-300 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button type="button" aria-label="Видалити заняття" onClick={() => { if (confirm('Видалити заняття?')) { const removed = l; setLessons(prev => prev.filter(x => x.id !== removed.id)); void (async () => { try { await studioApi.deleteLessonOnServer(removed.id); await reloadAppData() } catch (e) { console.error(e); setLessons(prev => prev.some(x => x.id === removed.id) ? prev : [...prev, removed]); alert('Не вдалося видалити') } })() } }} className="absolute top-1 right-1 w-5 h-5 rounded-md bg-red-950/60 text-red-300 flex items-center justify-center">
                       <X className="w-3 h-3" />
                     </button>
                   </div>
@@ -2947,7 +2971,7 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData }: { l
         <DialogContent>
           <form onSubmit={handleAddLesson} className="space-y-4">
             <div>
-              <p className="font-bold text-lg">Нове заняття</p>
+              <DialogTitle className="font-bold text-lg">Нове заняття</DialogTitle>
               <p className="text-sm text-muted-foreground">На дату: {format(targetDateForNewLesson, 'dd MMMM yyyy', {locale: uk})}</p>
             </div>
             <div>
@@ -3153,7 +3177,7 @@ export default function App() {
         {/* Admin Section */}
         <Route path="/admin" element={<AdminLayout isAdminLogged={isAdminLogged} setIsAdminLogged={setIsAdminLogged} onAdminLogout={endAdminSession} onAdminLoggedIn={reloadAppData} />}>
           <Route index element={<AdminHub />} />
-          <Route path="schedule" element={<AdminSchedulePage lessons={lessons} trainers={trainers} classTypes={classTypes} reloadAppData={reloadAppData} />} />
+          <Route path="schedule" element={<AdminSchedulePage lessons={lessons} trainers={trainers} classTypes={classTypes} reloadAppData={reloadAppData} setLessons={setLessons} />} />
           <Route path="settings" element={<AdminSettingsPage trainers={trainers} classTypes={classTypes} plans={plans} promoCodes={promoCodes} reloadAppData={reloadAppData} />} />
           <Route path="stats" element={<AdminStatsPage lessons={lessons} clients={clients} trainers={trainers} plans={plans} />} />
         </Route>
