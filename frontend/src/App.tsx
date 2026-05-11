@@ -40,6 +40,7 @@ interface ActualLesson {
   capacity: number
   booked_count: number
   status: LessonStatus
+  single_visit_price: number
   is_booked_by_me?: boolean
   my_booking_name?: string
   my_booking_email?: string
@@ -131,6 +132,16 @@ const makeDate = (baseDate: Date, h: number, m: number): Date => {
   const d = new Date(baseDate)
   d.setHours(h, m, 0, 0)
   return d
+}
+
+function formatDurationLabel(minutesInput: number | string): string {
+  const total = Math.max(0, Math.round(Number(minutesInput) || 0))
+  if (total === 0) return '0 хв'
+  const h = Math.floor(total / 60)
+  const m = total % 60
+  if (h === 0) return `${m} хв`
+  if (m === 0) return `${h} год`
+  return `${h} год ${m} хв`
 }
 
 // ── Utility: Persistent State ──────────────────────────────────────────────
@@ -620,7 +631,7 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
               </div>
               <div>
                 <h2 className="text-2xl font-bold text-foreground mb-2">Успішно заброньовано!</h2>
-                <p className="text-muted-foreground">Час заняття: {format(lesson.start_timestamp, 'HH:mm')}</p>
+                <p className="text-muted-foreground">Час заняття: {format(lesson.start_timestamp, 'HH:mm')} – {format(lesson.end_timestamp, 'HH:mm')}</p>
                 {successBookingUsedSubscription && (
                   <p className="text-sm text-foreground mt-2 font-medium">
                     {activeSub
@@ -663,7 +674,7 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
               <div>
                 <p className="font-bold text-foreground text-lg">{lesson.class_name}</p>
                 <div className="flex flex-wrap gap-4 text-sm text-muted-foreground mt-1">
-                  <span className="flex items-center gap-1.5"><Clock className="w-4 h-4" />{format(lesson.start_timestamp, 'd MMMM, HH:mm', {locale: uk})}</span>
+                  <span className="flex items-center gap-1.5"><Clock className="w-4 h-4" />{format(lesson.start_timestamp, 'd MMMM, HH:mm', {locale: uk})} – {format(lesson.end_timestamp, 'HH:mm')}</span>
                   <span className="flex items-center gap-1.5"><User className="w-4 h-4" />{lesson.trainer_name}</span>
                 </div>
               </div>
@@ -928,6 +939,7 @@ function CancelBookingPage({ reloadAppData }: { reloadAppData: () => Promise<voi
           capacity: raw.capacity,
           booked_count: raw.booked_count,
           status: raw.status as LessonStatus,
+          single_visit_price: raw.single_visit_price,
           is_booked_by_me: raw.is_booked_by_me,
           my_booking_email: raw.my_booking_email,
           my_booking_name: raw.my_booking_name,
@@ -1008,7 +1020,7 @@ function CancelBookingPage({ reloadAppData }: { reloadAppData: () => Promise<voi
           <CardContent className="pt-6 bg-muted/50">
             <div className="bg-muted/40 p-4 rounded-lg border border-white/[0.08] mb-6 space-y-2">
               <p className="font-bold text-foreground">{lesson?.class_name}</p>
-              <p className="text-sm text-muted-foreground">{lesson ? format(lesson.start_timestamp, 'd MMMM, HH:mm', {locale: uk}) : ''}</p>
+              <p className="text-sm text-muted-foreground">{lesson ? `${format(lesson.start_timestamp, 'd MMMM, HH:mm', {locale: uk})} – ${format(lesson.end_timestamp, 'HH:mm')}` : ''}</p>
               <p className="text-sm text-muted-foreground">{lesson?.trainer_name}</p>
               <hr className="my-2" />
               <p className="text-xs text-muted-foreground/90">Пошта: {lesson?.my_booking_email}</p>
@@ -2687,11 +2699,15 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData, setLe
   const [newLessonName, setNewLessonName] = useState(classTypes[0] || 'Тренування')
   const [newLessonTrainer, setNewLessonTrainer] = useState(trainers[0] || 'Тренер')
   const [newLessonTime, setNewLessonTime] = useState('18:00')
+  const [newLessonDuration, setNewLessonDuration] = useState('80')
+  const [newLessonPrice, setNewLessonPrice] = useState('200')
 
   const [editingLesson, setEditingLesson] = useState<ActualLesson | null>(null)
   const [editLessonName, setEditLessonName] = useState('')
   const [editLessonTrainer, setEditLessonTrainer] = useState('')
   const [editLessonTime, setEditLessonTime] = useState('')
+  const [editLessonDuration, setEditLessonDuration] = useState('80')
+  const [editLessonPrice, setEditLessonPrice] = useState('200')
 
   const actDate = selectedDate || new Date()
   const weekStart = startOfWeek(actDate, { weekStartsOn: 1 })
@@ -2703,8 +2719,10 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData, setLe
     e.preventDefault()
     const [h,m] = newLessonTime.split(':').map(Number)
     const start = makeDate(targetDateForNewLesson, h, m)
-    const end = makeDate(targetDateForNewLesson, h + 1, m)
+    const durationMinutes = Math.max(5, Math.round(Number(newLessonDuration) || 80))
+    const end = new Date(start.getTime() + durationMinutes * 60_000)
     const id = Math.random().toString(36).slice(2, 12)
+    const price = Math.max(0, Math.round(Number(newLessonPrice) || 0))
     const optimistic: ActualLesson = {
       id,
       class_name: newLessonName,
@@ -2714,9 +2732,12 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData, setLe
       capacity: 10,
       booked_count: 0,
       status: 'SCHEDULED',
+      single_visit_price: price,
     }
     setLessons(prev => [...prev, optimistic])
     setIsAddLessonOpen(false)
+    setNewLessonPrice('200')
+    setNewLessonDuration('80')
     void (async () => {
       try {
         await studioApi.createLessonOnServer({
@@ -2727,6 +2748,7 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData, setLe
           end_timestamp: end.toISOString(),
           capacity: optimistic.capacity,
           status: 'SCHEDULED',
+          single_visit_price: price,
         })
         await reloadAppData()
       } catch (err) {
@@ -2742,6 +2764,12 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData, setLe
     setEditLessonName(l.class_name)
     setEditLessonTrainer(l.trainer_name)
     setEditLessonTime(format(l.start_timestamp, 'HH:mm'))
+    const minutes = Math.max(
+      5,
+      Math.round((l.end_timestamp.getTime() - l.start_timestamp.getTime()) / 60_000),
+    )
+    setEditLessonDuration(String(minutes))
+    setEditLessonPrice(String(l.single_visit_price ?? 200))
   }
 
   const handleEditLesson = (e: React.FormEvent) => {
@@ -2750,13 +2778,15 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData, setLe
     const original = editingLesson
     const [h, m] = editLessonTime.split(':').map(Number)
     const start = makeDate(original.start_timestamp, h, m)
-    const durationMs = original.end_timestamp.getTime() - original.start_timestamp.getTime()
-    const end = new Date(start.getTime() + durationMs)
+    const durationMinutes = Math.max(5, Math.round(Number(editLessonDuration) || 80))
+    const end = new Date(start.getTime() + durationMinutes * 60_000)
+    const price = Math.max(0, Math.round(Number(editLessonPrice) || 0))
     const updates = {
       class_name: editLessonName,
       trainer_name: editLessonTrainer,
       start_timestamp: start,
       end_timestamp: end,
+      single_visit_price: price,
     }
     setLessons(prev => prev.map(l => l.id === original.id ? { ...l, ...updates } : l))
     setEditingLesson(null)
@@ -2767,6 +2797,7 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData, setLe
           trainer_name: updates.trainer_name,
           start_timestamp: start.toISOString(),
           end_timestamp: end.toISOString(),
+          single_visit_price: price,
         })
         await reloadAppData()
       } catch (err) {
@@ -2938,6 +2969,7 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData, setLe
                     <p className="text-muted-foreground mt-1 font-medium">{format(l.start_timestamp, 'HH:mm')} - {format(l.end_timestamp, 'HH:mm')}</p>
                     <p className="text-muted-foreground/90 mt-0.5">{l.trainer_name}</p>
                     <p className="text-muted-foreground/90 mt-0.5 flex items-center gap-1"><Users className="w-3 h-3" />{l.booked_count} / {l.capacity}</p>
+                    <p className="text-muted-foreground/90 mt-0.5">{l.single_visit_price}₴ / разове</p>
                     {isCancelled && <p className="mt-1 text-[10px] uppercase tracking-wide text-red-400 font-bold">Скасовано</p>}
                     <button type="button" aria-label="Редагувати заняття" onClick={() => openEditLesson(l)} className="absolute top-1 right-7 w-5 h-5 rounded-md bg-brand-gold/15 text-brand-gold flex items-center justify-center hover:bg-brand-gold/25">
                       <Pencil className="w-3 h-3" />
@@ -2989,6 +3021,11 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData, setLe
               <input required type="time" value={newLessonTime} onChange={e=>setNewLessonTime(e.target.value)} className={inputClasses} />
             </div>
             <div>
+              <label className="text-sm font-medium">Тривалість (хв)</label>
+              <input required type="number" min="5" step="5" value={newLessonDuration} onChange={e=>setNewLessonDuration(e.target.value)} className={inputClasses} />
+              <p className="mt-1 text-xs text-muted-foreground">{formatDurationLabel(newLessonDuration)}</p>
+            </div>
+            <div>
               <label className="text-sm font-medium">Тренер</label>
               {trainers.length > 0 ? (
                 <select required value={newLessonTrainer} onChange={e=>setNewLessonTrainer(e.target.value)} className={inputClasses}>
@@ -2997,6 +3034,10 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData, setLe
               ) : (
                 <input required placeholder="Спочатку додайте тренерів в Налаштуваннях" value={newLessonTrainer} onChange={e=>setNewLessonTrainer(e.target.value)} className={inputClasses} />
               )}
+            </div>
+            <div>
+              <label className="text-sm font-medium">Ціна разового відвідування (₴)</label>
+              <input required type="number" min="0" step="1" value={newLessonPrice} onChange={e=>setNewLessonPrice(e.target.value)} className={inputClasses} />
             </div>
             <Button type="submit" variant="brand" className="w-full">Створити заняття</Button>
           </form>
@@ -3028,6 +3069,11 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData, setLe
                 <input required type="time" value={editLessonTime} onChange={e => setEditLessonTime(e.target.value)} className={inputClasses} />
               </div>
               <div>
+                <label className="text-sm font-medium">Тривалість (хв)</label>
+                <input required type="number" min="5" step="5" value={editLessonDuration} onChange={e => setEditLessonDuration(e.target.value)} className={inputClasses} />
+                <p className="mt-1 text-xs text-muted-foreground">{formatDurationLabel(editLessonDuration)}</p>
+              </div>
+              <div>
                 <label className="text-sm font-medium">Тренер</label>
                 {trainers.length > 0 ? (
                   <select required value={editLessonTrainer} onChange={e => setEditLessonTrainer(e.target.value)} className={inputClasses}>
@@ -3037,6 +3083,10 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData, setLe
                 ) : (
                   <input required value={editLessonTrainer} onChange={e => setEditLessonTrainer(e.target.value)} className={inputClasses} />
                 )}
+              </div>
+              <div>
+                <label className="text-sm font-medium">Ціна разового відвідування (₴)</label>
+                <input required type="number" min="0" step="1" value={editLessonPrice} onChange={e=>setEditLessonPrice(e.target.value)} className={inputClasses} />
               </div>
               <Button type="submit" variant="brand" className="w-full">Зберегти зміни</Button>
             </form>
@@ -3095,6 +3145,7 @@ export default function App() {
           capacity: l.capacity,
           booked_count: l.booked_count,
           status: l.status as LessonStatus,
+          single_visit_price: l.single_visit_price,
         }))
       )
       setClients(data.clients as Client[])

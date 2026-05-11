@@ -98,15 +98,16 @@ model Payment {
 // ── Studio app (shared schedule, bookings, CRM) — used by Express API + frontend ──
 
 model PublicLesson {
-  id              String               @id
-  class_name      String
-  trainer_name    String
-  start_timestamp DateTime
-  end_timestamp   DateTime
-  capacity        Int
-  booked_count    Int                  @default(0)
-  status          String               @default("SCHEDULED")
-  bookings        PublicLessonBooking[]
+  id                 String                @id
+  class_name         String
+  trainer_name       String
+  start_timestamp    DateTime
+  end_timestamp      DateTime
+  capacity           Int
+  booked_count       Int                   @default(0)
+  status             String                @default("SCHEDULED")
+  single_visit_price Int                   @default(200)
+  bookings           PublicLessonBooking[]
 
   @@index([start_timestamp])
   @@map("public_lesson")

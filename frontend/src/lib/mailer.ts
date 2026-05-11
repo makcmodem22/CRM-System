@@ -1,9 +1,24 @@
 import 'server-only'
 import nodemailer from 'nodemailer'
-import { format } from 'date-fns'
-import { uk } from 'date-fns/locale'
 import { escapeHtml } from '@/lib/html-escape'
 import { publicSiteUrl } from '@/lib/site-url'
+
+// Studio operates in Kyiv. Server runs in UTC (Vercel), so date-fns format()
+// would render a Kyiv 18:00 class as 15:00 / 16:00. Pin formatting to Europe/Kyiv.
+const STUDIO_TZ = 'Europe/Kyiv'
+
+const dateFmt = new Intl.DateTimeFormat('uk-UA', {
+  timeZone: STUDIO_TZ,
+  day: 'numeric',
+  month: 'long',
+})
+
+const timeFmt = new Intl.DateTimeFormat('uk-UA', {
+  timeZone: STUDIO_TZ,
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+})
 
 let cachedTransporter: nodemailer.Transporter | null = null
 
@@ -20,8 +35,16 @@ function fromHeader() {
   return `"Brave! Yoga" <${process.env.SMTP_EMAIL}>`
 }
 
-function fmtTime(t: Date) {
-  return format(t, 'd MMMM, HH:mm', { locale: uk })
+export function fmtTime(t: Date) {
+  return `${dateFmt.format(t)}, ${timeFmt.format(t)}`
+}
+
+export function fmtHHmm(t: Date) {
+  return timeFmt.format(t)
+}
+
+export function fmtTimeRange(start: Date, end: Date) {
+  return `${fmtTime(start)} – ${fmtHHmm(end)}`
 }
 
 export async function sendBookingConfirmationEmail(args: {
@@ -29,12 +52,13 @@ export async function sendBookingConfirmationEmail(args: {
   clientName: string
   className: string
   startTimestamp: Date
+  endTimestamp: Date
   trainerName: string
   lessonId: string
   cancelToken: string
 }) {
   const base = publicSiteUrl()
-  const startTime = fmtTime(args.startTimestamp)
+  const startTime = fmtTimeRange(args.startTimestamp, args.endTimestamp)
   const cancelUrl = `${base}/cancel/${encodeURIComponent(args.lessonId)}?token=${encodeURIComponent(args.cancelToken)}`
   await transporter().sendMail({
     from: fromHeader(),
@@ -72,8 +96,9 @@ export async function sendBookingCancelledByClientEmail(args: {
   clientName: string
   className: string
   startTimestamp: Date
+  endTimestamp: Date
 }) {
-  const startTime = fmtTime(args.startTimestamp)
+  const startTime = fmtTimeRange(args.startTimestamp, args.endTimestamp)
   await transporter().sendMail({
     from: fromHeader(),
     to: args.to,

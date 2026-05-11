@@ -25,6 +25,7 @@ export type BootstrapPayload = {
     capacity: number
     booked_count: number
     status: string
+    single_visit_price: number
   }>
   clients: Array<{
     id: string
@@ -62,6 +63,7 @@ export async function createLessonOnServer(lesson: {
   end_timestamp: string
   capacity: number
   status?: string
+  single_visit_price?: number
 }) {
   return createLessonAction(lesson)
 }
@@ -75,6 +77,7 @@ export async function updateLessonOnServer(id: string, data: {
   trainer_name: string
   start_timestamp: string
   end_timestamp: string
+  single_visit_price?: number
 }) {
   return updateLessonAction(id, data)
 }

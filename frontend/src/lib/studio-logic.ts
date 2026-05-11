@@ -237,6 +237,7 @@ export async function getBootstrapData(opts: { isAdmin: boolean; userId: string 
     capacity: l.capacity,
     booked_count: l.booked_count,
     status: l.status,
+    single_visit_price: l.single_visit_price,
   }))
 
   let clients: ClientPayload[]
@@ -287,6 +288,7 @@ export async function createLesson(data: {
   end_timestamp: string
   capacity: number
   status?: string
+  single_visit_price?: number
 }) {
   await prisma.publicLesson.create({
     data: {
@@ -298,6 +300,7 @@ export async function createLesson(data: {
       capacity: Number(data.capacity) || 10,
       booked_count: 0,
       status: data.status || 'SCHEDULED',
+      single_visit_price: Math.max(0, Math.round(Number(data.single_visit_price ?? 200))),
     },
   })
 }
@@ -338,6 +341,7 @@ export async function updateLessonById(
     trainer_name: string
     start_timestamp: string
     end_timestamp: string
+    single_visit_price?: number
   },
 ) {
   await prisma.publicLesson.update({
@@ -347,6 +351,9 @@ export async function updateLessonById(
       trainer_name: data.trainer_name,
       start_timestamp: new Date(data.start_timestamp),
       end_timestamp: new Date(data.end_timestamp),
+      ...(data.single_visit_price != null
+        ? { single_visit_price: Math.max(0, Math.round(Number(data.single_visit_price))) }
+        : {}),
     },
   })
 }
@@ -405,6 +412,7 @@ export type CreatedBooking = {
   className: string
   trainerName: string
   startTimestamp: Date
+  endTimestamp: Date
 }
 
 /**
@@ -448,6 +456,7 @@ export async function postBookingRow(body: {
       className: lesson.class_name,
       trainerName: lesson.trainer_name,
       startTimestamp: lesson.start_timestamp,
+      endTimestamp: lesson.end_timestamp,
     }
   })
 }
@@ -513,6 +522,7 @@ export async function postBookingWithSubscriptionRow(body: {
       className: lesson.class_name,
       trainerName: lesson.trainer_name,
       startTimestamp: lesson.start_timestamp,
+      endTimestamp: lesson.end_timestamp,
     }
   })
 }
@@ -521,6 +531,7 @@ export type CancelledBooking = {
   className: string
   trainerName: string
   startTimestamp: Date
+  endTimestamp: Date
   email: string
   name: string
 }
@@ -558,6 +569,7 @@ async function cancelBookingByIdInTx(
     className: booking.lesson.class_name,
     trainerName: booking.lesson.trainer_name,
     startTimestamp: booking.lesson.start_timestamp,
+    endTimestamp: booking.lesson.end_timestamp,
     email: booking.client_email,
     name: booking.client_name,
   }
@@ -677,6 +689,7 @@ export async function getLessonForCancelByToken(bookingId: string) {
     capacity: lesson.capacity,
     booked_count: lesson.booked_count,
     status: lesson.status,
+    single_visit_price: lesson.single_visit_price,
     is_booked_by_me: true,
     my_booking_email: booking.client_email,
     my_booking_name: booking.client_name,
