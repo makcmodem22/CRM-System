@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server'
 import nodemailer from 'nodemailer'
-import { format } from 'date-fns'
-import { uk } from 'date-fns/locale'
 import { constantTimeEqual } from '@/lib/admin-crypto'
 import { escapeHtml } from '@/lib/html-escape'
+import { fmtTime } from '@/lib/mailer'
 import { autoCancelLowAttendanceLessons } from '@/lib/studio-logic'
 
 export const dynamic = 'force-dynamic'
@@ -20,7 +19,7 @@ async function sendCancellationEmail(to: string, name: string, className: string
   const pass = process.env.SMTP_PASSWORD
   if (!user || !pass) return
   const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user, pass } })
-  const startTime = format(startTimestamp, 'd MMMM, HH:mm', { locale: uk })
+  const startTime = fmtTime(startTimestamp)
   await transporter.sendMail({
     from: `"Brave! Yoga" <${user}>`,
     to,

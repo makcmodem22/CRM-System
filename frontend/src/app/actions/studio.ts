@@ -123,6 +123,7 @@ export async function postBookingAction(body: { lessonId: string; meta?: Record<
     clientName: sc.name || 'Гість',
     className: created.className,
     startTimestamp: created.startTimestamp,
+    endTimestamp: created.endTimestamp,
     trainerName: created.trainerName,
     lessonId: body.lessonId,
     bookingId: created.bookingId,
@@ -151,6 +152,7 @@ export async function postBookingWithSubscriptionAction(body: {
     clientName: sc.name || 'Гість',
     className: created.className,
     startTimestamp: created.startTimestamp,
+    endTimestamp: created.endTimestamp,
     trainerName: created.trainerName,
     lessonId: body.lessonId,
     bookingId: created.bookingId,
@@ -183,6 +185,7 @@ export async function cancelBookingAction(args: {
       clientName: cancelled.name || 'Гість',
       className: cancelled.className,
       startTimestamp: cancelled.startTimestamp,
+      endTimestamp: cancelled.endTimestamp,
     })
   } catch (err) {
     console.error('Cancel email failed', err)
@@ -209,6 +212,7 @@ async function trySendBookingEmail(args: {
   clientName: string
   className: string
   startTimestamp: Date
+  endTimestamp: Date
   trainerName: string
   lessonId: string
   bookingId: string
@@ -220,6 +224,7 @@ async function trySendBookingEmail(args: {
       clientName: args.clientName,
       className: args.className,
       startTimestamp: args.startTimestamp,
+      endTimestamp: args.endTimestamp,
       trainerName: args.trainerName,
       lessonId: args.lessonId,
       cancelToken,
