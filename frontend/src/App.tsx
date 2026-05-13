@@ -9,7 +9,7 @@ import {
   Calendar as CalendarIcon, Clock, Users, User,
   AlertTriangle, X, LogOut, Phone, Camera, Plus, Database, Settings, Pencil,
   CreditCard, Mail, Lock, ChevronDown, ChevronLeft, ChevronRight, Check, Crown, Eye, EyeOff,
-  Ticket, Award, Star, BarChart3, TrendingUp, DollarSign, Wallet
+  Ticket, Award, Star, BarChart3, TrendingUp, DollarSign, Wallet, MapPin, FileText
 } from 'lucide-react'
 
 import { Button } from './components/ui/button'
@@ -125,6 +125,16 @@ const DEFAULT_PLANS: SubscriptionPlan[] = [
   { id: 'plan_8', name: 'Абонемент на 8 занять', sessions: 8, price: 1800, duration_days: 30 },
   { id: 'plan_15', name: 'Абонемент на 15 занять', sessions: 15, price: 3000, duration_days: 30 },
 ]
+
+/** Public-facing legal / contact info. Rendered in the site footer and on the offer / refund pages so LiqPay verification can find it. */
+const BUSINESS_INFO = {
+  name: 'Brave.Yoga',
+  addressLine: 'вул. Соборна, 17, м. Рівне, Україна',
+  phone: '+380 97 902 6363',
+  phoneHref: '+380979026363',
+  email: 'Katya.sardyga@gmail.com',
+  servicesCategory: 'Надання послуг у сфері здоров’я та оздоровчих практик',
+} as const
 
 const inputClasses = "flex h-10 w-full rounded-md border border-white/10 bg-muted/45 px-3 py-2 text-sm text-foreground ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-gold/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
 
@@ -336,6 +346,66 @@ function Header({ role, onLogout, currentClient, onClientLogout }: {
   )
 }
 
+// ── Shared: Site Footer (contact + legal links, public-facing) ────────────
+function SiteFooter() {
+  return (
+    <footer className="border-t border-white/[0.07] bg-secondary/25 mt-12">
+      <div className="container px-4 sm:px-8 py-10 grid grid-cols-1 md:grid-cols-3 gap-8 text-sm">
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <img src={logoSrc} alt="" className="w-8 h-8 rounded-full" />
+            <span className="font-bold text-foreground tracking-tight">{BUSINESS_INFO.name}</span>
+          </div>
+          <p className="text-muted-foreground leading-relaxed">{BUSINESS_INFO.servicesCategory}.</p>
+        </div>
+
+        <div>
+          <h3 className="text-xs font-bold text-brand-gold uppercase tracking-[0.15em] mb-3">Контакти</h3>
+          <ul className="space-y-2 text-muted-foreground">
+            <li className="flex items-start gap-2">
+              <MapPin className="w-4 h-4 text-brand-gold shrink-0 mt-0.5" />
+              <span>{BUSINESS_INFO.addressLine}</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <Phone className="w-4 h-4 text-brand-gold shrink-0 mt-0.5" />
+              <a href={`tel:${BUSINESS_INFO.phoneHref}`} className="text-foreground hover:text-brand-gold transition-colors">
+                {BUSINESS_INFO.phone}
+              </a>
+            </li>
+            <li className="flex items-start gap-2">
+              <Mail className="w-4 h-4 text-brand-gold shrink-0 mt-0.5" />
+              <a href={`mailto:${BUSINESS_INFO.email}`} className="text-foreground hover:text-brand-gold transition-colors break-all">
+                {BUSINESS_INFO.email}
+              </a>
+            </li>
+          </ul>
+        </div>
+
+        <div>
+          <h3 className="text-xs font-bold text-brand-gold uppercase tracking-[0.15em] mb-3">Інформація</h3>
+          <ul className="space-y-2 text-muted-foreground">
+            <li>
+              <Link to="/offer" className="hover:text-brand-gold transition-colors inline-flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5" /> Публічна оферта
+              </Link>
+            </li>
+            <li>
+              <Link to="/refunds" className="hover:text-brand-gold transition-colors inline-flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5" /> Умови повернення
+              </Link>
+            </li>
+          </ul>
+        </div>
+      </div>
+      <div className="border-t border-white/[0.05] py-4">
+        <p className="container px-4 sm:px-8 text-xs text-muted-foreground/70 text-center md:text-left">
+          © {new Date().getFullYear()} {BUSINESS_INFO.name}. Всі права захищено.
+        </p>
+      </div>
+    </footer>
+  )
+}
+
 // ── Page: Client Home (Public) ──────────────────────────────────────────────
 function ClientPage({ lessons, currentClient, onClientLogout, reloadAppData }: {
   lessons: ActualLesson[],
@@ -348,10 +418,24 @@ function ClientPage({ lessons, currentClient, onClientLogout, reloadAppData }: {
   const [cancelLesson, setCancelLesson] = useState<ActualLesson | null>(null)
   const [isProcessingCancel, setIsProcessingCancel] = useState(false)
   const [cancelBlocked, setCancelBlocked] = useState(false)
+  const [viewMode, setViewMode] = useState<'day' | 'week'>('day')
 
   const filteredLessons = useMemo(() => {
     return lessons.filter(l => selectedDate && isSameDay(l.start_timestamp, selectedDate)).sort((a,b)=>a.start_timestamp.getTime()-b.start_timestamp.getTime())
   }, [lessons, selectedDate])
+
+  const weekAnchor = useMemo(() => selectedDate || new Date(), [selectedDate])
+  const weekStart = useMemo(() => startOfWeek(weekAnchor, { weekStartsOn: 1 }), [weekAnchor])
+  const weekEnd = useMemo(() => endOfWeek(weekAnchor, { weekStartsOn: 1 }), [weekAnchor])
+  const weekDays = useMemo(() => eachDayOfInterval({ start: weekStart, end: weekEnd }), [weekStart, weekEnd])
+  const weeklyLessonsByDay = useMemo(() => weekDays.map(day => ({
+    day,
+    lessons: lessons
+      .filter(l => isSameDay(l.start_timestamp, day))
+      .sort((a, b) => a.start_timestamp.getTime() - b.start_timestamp.getTime()),
+  })), [lessons, weekDays])
+
+  const shiftWeek = (deltaDays: number) => setSelectedDate(addDays(weekStart, deltaDays))
 
   const openCancelDialog = (lesson: ActualLesson) => {
     const hoursLeft = (lesson.start_timestamp.getTime() - Date.now()) / (1000 * 60 * 60)
@@ -421,56 +505,177 @@ function ClientPage({ lessons, currentClient, onClientLogout, reloadAppData }: {
         </div>
 
         <div className="md:col-span-8 lg:col-span-9 space-y-6">
-          <div>
-            <h2 className="text-3xl font-bold text-foreground tracking-tight">Розклад занять</h2>
-            <p className="text-sm text-muted-foreground mt-1">{selectedDate ? format(selectedDate, 'EEEE, d MMMM yyyy', { locale: uk }) : 'Оберіть дату'}</p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-3xl font-bold text-foreground tracking-tight">Розклад занять</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                {viewMode === 'day'
+                  ? (selectedDate ? format(selectedDate, 'EEEE, d MMMM yyyy', { locale: uk }) : 'Оберіть дату')
+                  : `${format(weekStart, 'd MMMM', { locale: uk })} – ${format(weekEnd, 'd MMMM yyyy', { locale: uk })}`}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 self-start sm:self-end">
+              {viewMode === 'week' && (
+                <div className="flex items-center gap-1">
+                  <Button type="button" variant="outline" size="icon" onClick={() => shiftWeek(-7)} aria-label="Попередній тиждень" className="h-9 w-9 border-white/12 bg-muted/30 hover:bg-brand-gold/10 hover:border-brand-gold/35">
+                    <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                  <Button type="button" variant="outline" size="icon" onClick={() => shiftWeek(7)} aria-label="Наступний тиждень" className="h-9 w-9 border-white/12 bg-muted/30 hover:bg-brand-gold/10 hover:border-brand-gold/35">
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </div>
+              )}
+              <div role="tablist" aria-label="Режим перегляду" className="inline-flex rounded-md border border-white/10 bg-muted/30 p-0.5">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={viewMode === 'day'}
+                  onClick={() => setViewMode('day')}
+                  className={cn(
+                    "px-3 h-8 rounded-[5px] text-xs font-semibold transition-colors",
+                    viewMode === 'day' ? 'bg-brand-gold text-brand-charcoal' : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >День</button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={viewMode === 'week'}
+                  onClick={() => setViewMode('week')}
+                  className={cn(
+                    "px-3 h-8 rounded-[5px] text-xs font-semibold transition-colors",
+                    viewMode === 'week' ? 'bg-brand-gold text-brand-charcoal' : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >Тиждень</button>
+              </div>
+            </div>
           </div>
 
-          <div className="grid gap-3">
-            <AnimatePresence>
-              {filteredLessons.map((lesson, idx) => {
-                const isFull = lesson.booked_count >= lesson.capacity
-                const imBooked = isLessonBookedByCurrentClient(lesson, currentClient)
+          {viewMode === 'day' ? (
+            <div className="grid gap-3">
+              <AnimatePresence>
+                {filteredLessons.map((lesson, idx) => {
+                  const isFull = lesson.booked_count >= lesson.capacity
+                  const imBooked = isLessonBookedByCurrentClient(lesson, currentClient)
+                  return (
+                    <motion.div key={lesson.id} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.05, duration: 0.3 }}>
+                      <Card className={cn("overflow-hidden border-white/[0.07] bg-muted/40 shadow-md shadow-black/20", imBooked ? "ring-1 ring-brand-gold/40 border-brand-gold/35" : "")}>
+                        <div className={cn("h-1 w-full", imBooked ? "bg-gradient-to-r from-brand-navy to-brand-navy-dark" : "bg-gradient-to-r from-brand-gold to-brand-gold-light")} />
+                        <div className="p-5 flex flex-col sm:flex-row gap-5 items-start sm:items-center justify-between">
+                          <div className="space-y-2.5 flex-1 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="text-base font-bold text-foreground">{lesson.class_name}</h3>
+                              {imBooked && <Badge className="bg-brand-gold text-brand-charcoal border-0 text-[10px] px-2">Ви записані</Badge>}
+                              {isFull && !imBooked && <Badge variant="destructive" className="text-[10px] px-2">Місць немає</Badge>}
+                            </div>
+                            <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                              <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" />{format(lesson.start_timestamp, 'HH:mm')} – {format(lesson.end_timestamp, 'HH:mm')}</span>
+                              <span className="flex items-center gap-1.5"><User className="w-3.5 h-3.5" />{lesson.trainer_name}</span>
+                              <span className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5" />{lesson.booked_count} / {lesson.capacity} місць</span>
+                            </div>
+                          </div>
+                          <div className="w-full sm:w-auto shrink-0 flex gap-2">
+                            {!imBooked ? (
+                              <Button size="sm" disabled={isFull} onClick={() => navigate(`/book/${lesson.id}`)} className="w-full sm:w-28">
+                                Записатись
+                              </Button>
+                            ) : (
+                              <Button size="sm" variant="outline" onClick={() => openCancelDialog(lesson)} className="w-full sm:w-28 border-red-400/35 text-red-300 hover:bg-red-500/15 hover:text-red-200">
+                                Скасувати
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </Card>
+                    </motion.div>
+                  )
+                })}
+              </AnimatePresence>
+              {filteredLessons.length === 0 && (
+                <div className="py-24 text-center text-muted-foreground border border-dashed border-border rounded-xl bg-card/60 backdrop-blur-sm">
+                  <p>На цей день не знайдено занять.</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
+              {weeklyLessonsByDay.map(({ day, lessons: dayLessons }) => {
+                const isTodayLoc = isSameDay(day, new Date())
                 return (
-                  <motion.div key={lesson.id} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.05, duration: 0.3 }}>
-                    <Card className={cn("overflow-hidden border-white/[0.07] bg-muted/40 shadow-md shadow-black/20", imBooked ? "ring-1 ring-brand-gold/40 border-brand-gold/35" : "")}>
-                      <div className={cn("h-1 w-full", imBooked ? "bg-gradient-to-r from-brand-navy to-brand-navy-dark" : "bg-gradient-to-r from-brand-gold to-brand-gold-light")} />
-                      <div className="p-5 flex flex-col sm:flex-row gap-5 items-start sm:items-center justify-between">
-                        <div className="space-y-2.5 flex-1 min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-base font-bold text-foreground">{lesson.class_name}</h3>
-                            {imBooked && <Badge className="bg-brand-gold text-brand-charcoal border-0 text-[10px] px-2">Ви записані</Badge>}
-                            {isFull && !imBooked && <Badge variant="destructive" className="text-[10px] px-2">Місць немає</Badge>}
-                          </div>
-                          <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-                            <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" />{format(lesson.start_timestamp, 'HH:mm')} – {format(lesson.end_timestamp, 'HH:mm')}</span>
-                            <span className="flex items-center gap-1.5"><User className="w-3.5 h-3.5" />{lesson.trainer_name}</span>
-                            <span className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5" />{lesson.booked_count} / {lesson.capacity} місць</span>
-                          </div>
-                        </div>
-                        <div className="w-full sm:w-auto shrink-0 flex gap-2">
-                          {!imBooked ? (
-                            <Button size="sm" disabled={isFull} onClick={() => navigate(`/book/${lesson.id}`)} className="w-full sm:w-28">
-                              Записатись
-                            </Button>
-                          ) : (
-                            <Button size="sm" variant="outline" onClick={() => openCancelDialog(lesson)} className="w-full sm:w-28 border-red-400/35 text-red-300 hover:bg-red-500/15 hover:text-red-200">
-                              Скасувати
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    </Card>
-                  </motion.div>
+                  <Card key={day.toISOString()} className={cn(
+                    "flex flex-col overflow-hidden border border-white/[0.07] bg-muted/30 shadow-md shadow-black/15",
+                    isTodayLoc && "ring-1 ring-brand-gold/60"
+                  )}>
+                    <button
+                      type="button"
+                      onClick={() => { setSelectedDate(day); setViewMode('day') }}
+                      aria-label={`Переглянути ${format(day, 'EEEE, d MMMM', { locale: uk })} у режимі дня`}
+                      className={cn(
+                        "px-2 py-2 text-center border-b border-white/[0.06] transition-colors shrink-0",
+                        isTodayLoc ? "bg-brand-gold/10 hover:bg-brand-gold/15" : "bg-muted/40 hover:bg-muted/60"
+                      )}
+                    >
+                      <p className={cn(
+                        "text-[11px] font-bold uppercase tracking-wide",
+                        isTodayLoc ? "text-brand-gold" : "text-muted-foreground"
+                      )}>{format(day, 'EEEE', { locale: uk })}</p>
+                      <p className={cn(
+                        "text-[10px] mt-0.5 tabular-nums",
+                        isTodayLoc ? "text-brand-gold/90 font-semibold" : "text-muted-foreground/80"
+                      )}>{format(day, 'd MMM', { locale: uk })}{isTodayLoc ? ' · сьогодні' : ''}</p>
+                    </button>
+                    <CardContent className="p-2 flex-1 flex flex-col gap-2 min-h-[140px]">
+                      {dayLessons.length === 0 ? (
+                        <p className="text-[11px] text-muted-foreground/60 text-center py-3">Немає занять</p>
+                      ) : (
+                        dayLessons.map(lesson => {
+                          const isFull = lesson.booked_count >= lesson.capacity
+                          const imBooked = isLessonBookedByCurrentClient(lesson, currentClient)
+                          const handleClick = () => {
+                            if (imBooked) openCancelDialog(lesson)
+                            else if (!isFull) navigate(`/book/${lesson.id}`)
+                          }
+                          const disabled = !imBooked && isFull
+                          return (
+                            <button
+                              key={lesson.id}
+                              type="button"
+                              onClick={handleClick}
+                              disabled={disabled}
+                              aria-label={`${lesson.class_name}, ${format(lesson.start_timestamp, 'HH:mm')} – ${format(lesson.end_timestamp, 'HH:mm')}, ${lesson.trainer_name}`}
+                              className={cn(
+                                "text-left p-2 rounded-lg border bg-card/80 transition-colors",
+                                imBooked
+                                  ? "border-brand-gold/40 ring-1 ring-brand-gold/30 hover:bg-brand-gold/5"
+                                  : disabled
+                                    ? "border-white/[0.06] opacity-60 cursor-not-allowed"
+                                    : "border-white/[0.07] hover:border-brand-gold/50 hover:bg-brand-gold/5"
+                              )}
+                            >
+                              <p className="text-[11px] font-bold text-foreground leading-tight">{lesson.class_name}</p>
+                              <p className="text-[11px] text-muted-foreground mt-1 font-medium flex items-center gap-1">
+                                <Clock className="w-3 h-3" />
+                                {format(lesson.start_timestamp, 'HH:mm')}–{format(lesson.end_timestamp, 'HH:mm')}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground/90 mt-0.5 truncate">{lesson.trainer_name}</p>
+                              <p className="text-[10px] text-muted-foreground/80 mt-0.5 flex items-center gap-1">
+                                <Users className="w-3 h-3" />{lesson.booked_count} / {lesson.capacity}
+                              </p>
+                              {imBooked && (
+                                <Badge className="bg-brand-gold text-brand-charcoal border-0 text-[9px] px-1.5 mt-1.5">Ви записані</Badge>
+                              )}
+                              {isFull && !imBooked && (
+                                <Badge variant="destructive" className="text-[9px] px-1.5 mt-1.5">Місць немає</Badge>
+                              )}
+                            </button>
+                          )
+                        })
+                      )}
+                    </CardContent>
+                  </Card>
                 )
               })}
-            </AnimatePresence>
-            {filteredLessons.length === 0 && (
-              <div className="py-24 text-center text-muted-foreground border border-dashed border-border rounded-xl bg-card/60 backdrop-blur-sm">
-                <p>На цей день не знайдено занять.</p>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </main>
 
@@ -494,6 +699,8 @@ function ClientPage({ lessons, currentClient, onClientLogout, reloadAppData }: {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SiteFooter />
     </div>
   )
 }
@@ -526,7 +733,7 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
     return <div className="p-8 text-center">Заняття не знайдено <br/><Button onClick={()=>navigate('/')} className="mt-4">Назад</Button></div>
   }
 
-  // ── Single visit booking ──
+  // ── Single visit booking — kicks off LiqPay checkout, then the result page resolves it ──
   const handleBookSingle = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!currentClient) {
@@ -536,17 +743,13 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
     setIsProcessing(true)
     try {
       await studioApi.upsertStudioClient({ name: name || currentClient.name, phone: phone || currentClient.phone || '' })
-      await studioApi.postBooking({ lessonId: lesson.id, meta: null })
-      await reloadAppData()
+      const { checkoutUrl } = await studioApi.postBooking({ lessonId: lesson.id })
+      window.location.assign(checkoutUrl)
     } catch (err) {
       console.error(err)
       alert(err instanceof Error ? err.message : 'Не вдалося записатись')
       setIsProcessing(false)
-      return
     }
-    setIsProcessing(false)
-    setSuccessBookingUsedSubscription(false)
-    setStep('success')
   }
 
   // ── Subscription booking ──
@@ -593,30 +796,17 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
     setStep('success')
   }
 
-  // ── Buy subscription plan ──
+  // ── Buy subscription plan — kicks off LiqPay checkout ──
+  // The plan is snapshotted server-side at order time; price/sessions/duration cannot be forged.
   const handleBuyPlan = async (plan: SubscriptionPlan) => {
     if (!currentClient) return
-    const now = new Date()
-    const newSub: ClientSubscription = {
-      id: Math.random().toString(36).substr(2, 9),
-      plan_id: plan.id,
-      plan_name: plan.name,
-      total_sessions: plan.sessions,
-      used_sessions: 0,
-      purchased_at: now.toISOString(),
-      expires_at: addDays(now, plan.duration_days).toISOString(),
-      source: 'purchase',
-    }
-    const next = [...currentClient.subscriptions, newSub]
     try {
-      await studioApi.putClientSubscriptions(next)
-      await reloadAppData()
+      const { checkoutUrl } = await studioApi.purchasePlanOnServer(plan.id)
+      window.location.assign(checkoutUrl)
     } catch (e) {
       console.error(e)
-      alert('Не вдалося зберегти абонемент на сервері.')
-      return
+      alert('Не вдалося розпочати оплату.')
     }
-    setStep('sub_confirm')
   }
 
   // ── Success screen ──
@@ -1231,26 +1421,13 @@ function ClientDashboardPage({ currentClient, onClientLogout, plans, promoCodes,
   const allSubs = [...currentClient.subscriptions].reverse()
 
   const handleBuyPlan = async (plan: SubscriptionPlan) => {
-    const now = new Date()
-    const newSub: ClientSubscription = {
-      id: Math.random().toString(36).substr(2, 9),
-      plan_id: plan.id,
-      plan_name: plan.name,
-      total_sessions: plan.sessions,
-      used_sessions: 0,
-      purchased_at: now.toISOString(),
-      expires_at: addDays(now, plan.duration_days).toISOString(),
-      source: 'purchase',
-    }
     try {
-      await studioApi.putClientSubscriptions([...currentClient.subscriptions, newSub])
-      await reloadAppData()
+      const { checkoutUrl } = await studioApi.purchasePlanOnServer(plan.id)
+      window.location.assign(checkoutUrl)
     } catch (e) {
       console.error(e)
-      alert('Не вдалося зберегти покупку.')
-      return
+      alert('Не вдалося розпочати оплату.')
     }
-    setShowBuyPlans(false)
   }
 
   const handleActivatePromo = async () => {
@@ -1500,6 +1677,313 @@ function ClientDashboardPage({ currentClient, onClientLogout, plans, promoCodes,
   )
 }
 
+// ── Page: Public Offer (Публічний договір оферти) ───────────────────────────
+function PublicOfferPage() {
+  const navigate = useNavigate()
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <Header role="CLIENT" />
+      <main className="flex-1 container px-4 sm:px-8 py-10 max-w-4xl">
+        <Button variant="ghost" onClick={() => navigate('/')} className="mb-4 self-start">← На головну</Button>
+
+        <article className="space-y-6">
+          <header className="border-b border-white/[0.07] pb-4">
+            <p className="text-xs font-bold text-brand-gold uppercase tracking-[0.15em]">Юридична інформація</p>
+            <h1 className="text-3xl font-bold tracking-tight mt-2">Публічний договір (оферта)</h1>
+            <p className="text-sm text-muted-foreground mt-1">Про надання послуг у сфері здоров’я та оздоровчих практик</p>
+          </header>
+
+          <section className="rounded-xl border border-white/[0.07] bg-muted/25 p-5 space-y-2">
+            <h2 className="text-xs font-bold text-brand-gold uppercase tracking-[0.12em]">Виконавець</h2>
+            <ul className="text-sm space-y-1.5 mt-2">
+              <li className="flex gap-2"><span className="text-muted-foreground w-32 shrink-0">Назва:</span><span className="font-semibold">{BUSINESS_INFO.name}</span></li>
+              <li className="flex gap-2"><span className="text-muted-foreground w-32 shrink-0">Адреса:</span><span>{BUSINESS_INFO.addressLine}</span></li>
+              <li className="flex gap-2"><span className="text-muted-foreground w-32 shrink-0">Телефон:</span><a href={`tel:${BUSINESS_INFO.phoneHref}`} className="text-foreground hover:text-brand-gold">{BUSINESS_INFO.phone}</a></li>
+              <li className="flex gap-2"><span className="text-muted-foreground w-32 shrink-0">Ел. пошта:</span><a href={`mailto:${BUSINESS_INFO.email}`} className="text-foreground hover:text-brand-gold break-all">{BUSINESS_INFO.email}</a></li>
+              <li className="flex gap-2"><span className="text-muted-foreground w-32 shrink-0">Сфера діяльності:</span><span>{BUSINESS_INFO.servicesCategory}</span></li>
+            </ul>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-bold">1. Загальні положення</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">1.1. Цей документ є офіційною публічною офертою (далі — «Договір») від {BUSINESS_INFO.name} (далі — «Виконавець») фізичним особам (далі — «Клієнт») щодо надання послуг у сфері здоров’я та оздоровчих практик.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">1.2. Замовляючи послугу через сайт або здійснюючи оплату, Клієнт повністю та беззастережно приймає умови цього Договору.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">1.3. Виконавець залишає за собою право вносити зміни до цього Договору. Зміни набирають чинності з моменту їх публікації на сайті.</p>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-bold">2. Предмет договору</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">2.1. Виконавець надає Клієнту послуги у сфері здоров’я та оздоровчих практик: групові та індивідуальні заняття йогою, стретчингом та іншими оздоровчими практиками згідно з чинним розкладом, опублікованим на сайті.</p>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-bold">3. Порядок надання послуг</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">3.1. Розклад занять публікується на сайті Виконавця і може оновлюватися.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">3.2. Клієнт здійснює запис на конкретне заняття через особистий кабінет на сайті.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">3.3. Один запис надає право на участь в одному занятті відповідно до обраного тарифу — разове відвідування або списання сесії з абонементу.</p>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-bold">4. Вартість та порядок оплати</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">4.1. Вартість послуг визначається тарифами, що публікуються на сайті, у гривнях України.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">4.2. Оплата здійснюється безготівково через платіжний сервіс LiqPay банківською карткою або іншими доступними способами.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">4.3. Послуга вважається оплаченою з моменту зарахування коштів на рахунок Виконавця.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">4.4. Абонемент діє протягом терміну, зазначеного у момент придбання. Невикористані відвідування після закінчення строку не переносяться.</p>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-bold">5. Скасування запису та повернення коштів</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">5.1. Клієнт має право скасувати запис на заняття не пізніше ніж за 2 (дві) години до його початку.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">5.2. У разі своєчасного скасування:</p>
+            <ul className="text-sm text-muted-foreground leading-relaxed list-disc pl-6 space-y-1">
+              <li>якщо заняття було оплачено окремою оплатою — кошти повертаються у повному обсязі на платіжний інструмент, з якого було здійснено оплату, упродовж до 7 (семи) банківських днів;</li>
+              <li>якщо заняття було оплачено з абонементу — відвідування повертається на абонемент і доступне для повторного використання у межах строку дії абонементу.</li>
+            </ul>
+            <p className="text-sm text-muted-foreground leading-relaxed">5.3. У разі скасування пізніше ніж за 2 години до початку заняття, або у разі неявки без скасування, кошти за разове відвідування не повертаються, а відвідування з абонементу не повертається.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">5.4. Якщо заняття не відбулося з вини Виконавця (зокрема через недостатню кількість учасників), відвідування автоматично повертається на абонемент, а кошти за разове відвідування повертаються Клієнту у повному обсязі. Клієнт отримає лист-повідомлення на електронну пошту.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">5.5. Активований абонемент після часткового використання поверненню не підлягає.</p>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-bold">6. Права та обов’язки сторін</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">6.1. Виконавець зобов’язаний надати послугу у визначений час та у вказаному місці.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">6.2. Виконавець має право скасувати заняття у разі надзвичайних обставин або недостатньої кількості учасників, повідомивши Клієнта електронною поштою.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">6.3. Клієнт зобов’язаний дотримуватись правил поведінки під час занять та інструкцій тренера.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">6.4. Клієнт зобов’язаний повідомити про наявні протипоказання за станом здоров’я до початку занять.</p>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-bold">7. Відповідальність сторін</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">7.1. Виконавець не несе відповідальності за стан здоров’я Клієнта під час занять, якщо Клієнт не повідомив про наявні протипоказання або не дотримувався інструкцій тренера.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">7.2. У всьому, що не врегульовано цим Договором, сторони керуються чинним законодавством України.</p>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-bold">8. Персональні дані</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">8.1. Виконавець обробляє персональні дані Клієнта (ім’я, контактні дані, історія записів) виключно з метою надання послуг та відповідно до Закону України «Про захист персональних даних».</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">8.2. Дані платіжних карток на сайті не зберігаються; обробку платежів здійснює платіжний сервіс LiqPay.</p>
+          </section>
+
+          <section className="space-y-3 pb-6">
+            <h2 className="text-lg font-bold">9. Реквізити та зв’язок</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">Для будь-яких звернень — повернення коштів, претензій, скарг або питань щодо послуг — звертайтесь до Виконавця:</p>
+            <div className="rounded-xl border border-white/[0.07] bg-muted/25 p-5 text-sm space-y-1.5">
+              <p><span className="text-muted-foreground">Назва:</span> <span className="font-semibold">{BUSINESS_INFO.name}</span></p>
+              <p><span className="text-muted-foreground">Адреса:</span> {BUSINESS_INFO.addressLine}</p>
+              <p><span className="text-muted-foreground">Телефон:</span> <a href={`tel:${BUSINESS_INFO.phoneHref}`} className="text-foreground hover:text-brand-gold">{BUSINESS_INFO.phone}</a></p>
+              <p><span className="text-muted-foreground">Ел. пошта:</span> <a href={`mailto:${BUSINESS_INFO.email}`} className="text-foreground hover:text-brand-gold break-all">{BUSINESS_INFO.email}</a></p>
+            </div>
+          </section>
+        </article>
+      </main>
+      <SiteFooter />
+    </div>
+  )
+}
+
+// ── Page: Refunds (Умови повернення) ────────────────────────────────────────
+function RefundsPage() {
+  const navigate = useNavigate()
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <Header role="CLIENT" />
+      <main className="flex-1 container px-4 sm:px-8 py-10 max-w-4xl">
+        <Button variant="ghost" onClick={() => navigate('/')} className="mb-4 self-start">← На головну</Button>
+
+        <article className="space-y-6">
+          <header className="border-b border-white/[0.07] pb-4">
+            <p className="text-xs font-bold text-brand-gold uppercase tracking-[0.15em]">Підтримка клієнтів</p>
+            <h1 className="text-3xl font-bold tracking-tight mt-2">Умови повернення</h1>
+            <p className="text-sm text-muted-foreground mt-1">Як скасувати запис та як ми повертаємо кошти</p>
+          </header>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-bold">1. Скасування запису на заняття</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">Ви можете скасувати запис на заняття не пізніше ніж <strong className="text-foreground">за 2 (дві) години до його початку</strong>.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">Скасувати запис можна у двох способах:</p>
+            <ul className="text-sm text-muted-foreground leading-relaxed list-disc pl-6 space-y-1">
+              <li>в особистому кабінеті на сайті — кнопка «Скасувати» біля відповідного запису;</li>
+              <li>за посиланням з листа-підтвердження, який ми надіслали після успішного запису.</li>
+            </ul>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-bold">2. Як повертаються кошти</h2>
+
+            <div className="rounded-xl border border-white/[0.07] bg-muted/25 p-5 space-y-2">
+              <h3 className="font-semibold text-foreground">Разові оплати</h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">При своєчасному скасуванні кошти повертаються у повному обсязі тим самим способом, яким було здійснено оплату (на банківську картку через LiqPay). Термін повернення — <strong className="text-foreground">до 7 (семи) банківських днів</strong> з моменту скасування.</p>
+            </div>
+
+            <div className="rounded-xl border border-white/[0.07] bg-muted/25 p-5 space-y-2">
+              <h3 className="font-semibold text-foreground">Абонементи</h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">При своєчасному скасуванні запису відвідування повертається на ваш абонемент, і його можна використати для запису на інше заняття у межах строку дії абонементу.</p>
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-bold">3. Якщо скасування відбулося пізніше ніж за 2 години</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">У такому випадку:</p>
+            <ul className="text-sm text-muted-foreground leading-relaxed list-disc pl-6 space-y-1">
+              <li>кошти за разове відвідування не повертаються;</li>
+              <li>відвідування не повертається на абонемент;</li>
+              <li>правило діє також для випадків неявки без скасування.</li>
+            </ul>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-bold">4. Якщо заняття було скасовано студією</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">Якщо заняття не відбулося з вини студії (наприклад, через недостатню кількість учасників), <strong className="text-foreground">відвідування автоматично повертається на ваш абонемент</strong>, а кошти за разове відвідування повертаються у повному обсязі. Ви отримаєте лист-повідомлення на електронну пошту.</p>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-bold">5. Які послуги не підлягають поверненню</h2>
+            <ul className="text-sm text-muted-foreground leading-relaxed list-disc pl-6 space-y-1">
+              <li>активований абонемент після його часткового використання — поверненню не підлягає;</li>
+              <li>послуги, які вже були надані (відвідане заняття);</li>
+              <li>невикористані відвідування абонементу після завершення строку його дії;</li>
+              <li>подарункові сертифікати після їх активації або використання.</li>
+            </ul>
+          </section>
+
+          <section className="space-y-3 pb-6">
+            <h2 className="text-lg font-bold">6. Як з нами зв’язатися</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">З будь-яких питань щодо повернення коштів зв’яжіться з нами:</p>
+            <div className="rounded-xl border border-white/[0.07] bg-muted/25 p-5 text-sm space-y-1.5">
+              <p className="flex items-start gap-2"><Mail className="w-4 h-4 text-brand-gold shrink-0 mt-0.5" /><a href={`mailto:${BUSINESS_INFO.email}`} className="text-foreground hover:text-brand-gold break-all">{BUSINESS_INFO.email}</a></p>
+              <p className="flex items-start gap-2"><Phone className="w-4 h-4 text-brand-gold shrink-0 mt-0.5" /><a href={`tel:${BUSINESS_INFO.phoneHref}`} className="text-foreground hover:text-brand-gold">{BUSINESS_INFO.phone}</a></p>
+              <p className="flex items-start gap-2"><MapPin className="w-4 h-4 text-brand-gold shrink-0 mt-0.5" />{BUSINESS_INFO.addressLine}</p>
+            </div>
+            <p className="text-xs text-muted-foreground/80 mt-2">Ми відповідаємо на запити протягом 1–2 робочих днів.</p>
+          </section>
+        </article>
+      </main>
+      <SiteFooter />
+    </div>
+  )
+}
+
+// ── Page: Payment Result (post-LiqPay-redirect) ────────────────────────────
+/**
+ * LiqPay redirects the user back to /payment/result?orderId=... after checkout. We poll the
+ * server every 2s for up to 30s waiting for the server-to-server callback to land. The
+ * payment row is the source of truth — never trust query-string status.
+ */
+function PaymentResultPage({ reloadAppData }: { reloadAppData: () => Promise<void> }) {
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const orderId = searchParams.get('orderId') || ''
+  const [status, setStatus] = useState<'CREATED' | 'SUCCESS' | 'FAILED' | 'REFUNDED' | 'UNKNOWN'>(
+    orderId ? 'CREATED' : 'UNKNOWN',
+  )
+  const [purpose, setPurpose] = useState<'single_visit' | 'plan_purchase' | null>(null)
+  const [timedOut, setTimedOut] = useState(false)
+  const [error, setError] = useState<string | null>(orderId ? null : 'Відсутній номер замовлення')
+
+  useEffect(() => {
+    if (!orderId) return
+    let cancelled = false
+    const started = Date.now()
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const poll = async () => {
+      if (cancelled) return
+      try {
+        const s = await studioApi.fetchPaymentStatus(orderId)
+        if (cancelled) return
+        setStatus(s.status)
+        setPurpose(s.purpose)
+        if (s.status === 'SUCCESS') {
+          void reloadAppData()
+          return
+        }
+        if (s.status === 'FAILED' || s.status === 'REFUNDED') return
+        if (Date.now() - started > 30_000) {
+          setTimedOut(true)
+          return
+        }
+        timer = setTimeout(poll, 2000)
+      } catch (err) {
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : 'Помилка завантаження')
+      }
+    }
+    void poll()
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  }, [orderId, reloadAppData])
+
+  const isWaiting = status === 'CREATED' && !timedOut && !error
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <Header role="CLIENT" />
+      <main className="flex-1 container px-4 sm:px-8 py-12 max-w-xl">
+        <Card className="border-white/[0.07] bg-secondary/25">
+          <CardContent className="p-8 text-center space-y-4">
+            {isWaiting && (
+              <>
+                <div className="mx-auto w-12 h-12 rounded-full border-2 border-brand-gold/40 border-t-brand-gold animate-spin" />
+                <h1 className="text-xl font-bold">Обробляємо ваш платіж…</h1>
+                <p className="text-sm text-muted-foreground">Зачекайте кілька секунд. Ми отримуємо підтвердження від LiqPay.</p>
+              </>
+            )}
+
+            {status === 'SUCCESS' && (
+              <>
+                <div className="mx-auto w-14 h-14 rounded-full bg-brand-gold/20 text-brand-gold flex items-center justify-center">
+                  <Check className="w-7 h-7" />
+                </div>
+                <h1 className="text-2xl font-bold">Оплата успішна</h1>
+                <p className="text-sm text-muted-foreground">
+                  {purpose === 'single_visit' ? 'Ваш запис на заняття підтверджено. Ми надіслали лист із деталями.' : 'Абонемент додано до вашого профілю. Тепер ви можете записуватись на заняття.'}
+                </p>
+                <div className="flex flex-col sm:flex-row gap-2 justify-center pt-2">
+                  <Button variant="brand" onClick={() => navigate('/dashboard')}>Мій кабінет</Button>
+                  <Button variant="outline" onClick={() => navigate('/')}>На головну</Button>
+                </div>
+              </>
+            )}
+
+            {(status === 'FAILED' || status === 'REFUNDED') && (
+              <>
+                <div className="mx-auto w-14 h-14 rounded-full bg-red-500/15 text-red-300 flex items-center justify-center">
+                  <X className="w-7 h-7" />
+                </div>
+                <h1 className="text-2xl font-bold">Оплата не пройшла</h1>
+                <p className="text-sm text-muted-foreground">Спробуйте ще раз або скористайтесь іншою карткою. Кошти не списано.</p>
+                <div className="flex flex-col sm:flex-row gap-2 justify-center pt-2">
+                  <Button variant="brand" onClick={() => navigate('/')}>Повернутися</Button>
+                </div>
+              </>
+            )}
+
+            {timedOut && status === 'CREATED' && (
+              <>
+                <AlertTriangle className="w-10 h-10 text-amber-400 mx-auto" />
+                <h1 className="text-xl font-bold">Платіж все ще обробляється</h1>
+                <p className="text-sm text-muted-foreground">Підтвердження від LiqPay може зайняти ще трохи часу. Оновіть сторінку через хвилину або перевірте свій кабінет.</p>
+                <div className="flex flex-col sm:flex-row gap-2 justify-center pt-2">
+                  <Button variant="brand" onClick={() => window.location.reload()}>Оновити</Button>
+                  <Button variant="outline" onClick={() => navigate('/dashboard')}>Мій кабінет</Button>
+                </div>
+              </>
+            )}
+
+            {(error || status === 'UNKNOWN') && (
+              <>
+                <AlertTriangle className="w-10 h-10 text-red-400 mx-auto" />
+                <h1 className="text-xl font-bold">Не вдалося отримати статус платежу</h1>
+                <p className="text-sm text-muted-foreground">{error || 'Платіж не знайдено.'}</p>
+                <Button variant="brand" onClick={() => navigate('/')}>На головну</Button>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </main>
+    </div>
+  )
+}
+
 // ── Admin Layout & Login ────────────────────────────────────────────────────
 function AdminLayout({ isAdminLogged, setIsAdminLogged, onAdminLogout, onAdminLoggedIn }: {
   isAdminLogged: boolean
@@ -1578,7 +2062,7 @@ function AdminHub() {
       <img src={logoSrc} alt="" className="w-16 h-16 rounded-full shadow-lg mb-4 ring-2 ring-brand-gold/30" />
       <h1 className="text-3xl font-bold mb-2 text-foreground tracking-tight">Меню Адміністратора</h1>
       <p className="text-sm text-muted-foreground mb-8">Brave! Yoga — внутрішня панель</p>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 w-full max-w-6xl">
         <Card className="cursor-pointer hover:border-brand-gold/40 hover:shadow-lg transition-all group border-border/80" onClick={() => navigate('/admin/schedule')}>
           <CardContent className="flex flex-col items-center p-10 text-center gap-4">
              <div className="w-20 h-20 rounded-2xl bg-secondary text-brand-gold flex items-center justify-center group-hover:scale-110 transition-transform ring-1 ring-brand-gold/25">
@@ -1587,6 +2071,18 @@ function AdminHub() {
              <div>
                <h2 className="text-xl font-bold">Розклад занять</h2>
                <p className="text-sm text-muted-foreground mt-2">Редагування тижневого графіку, скасування занять, генерація фото для соцмереж.</p>
+             </div>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer hover:border-brand-gold/40 hover:shadow-lg transition-all group border-border/80" onClick={() => navigate('/admin/clients')}>
+          <CardContent className="flex flex-col items-center p-10 text-center gap-4">
+             <div className="w-20 h-20 rounded-2xl bg-brand-gold/10 text-brand-gold flex items-center justify-center group-hover:scale-110 transition-transform ring-1 ring-brand-gold/25">
+               <Users className="w-10 h-10" />
+             </div>
+             <div>
+               <h2 className="text-xl font-bold">Клієнти</h2>
+               <p className="text-sm text-muted-foreground mt-2">Список усіх клієнтів, перегляд абонементів, історії записів та контактів.</p>
              </div>
           </CardContent>
         </Card>
@@ -1615,6 +2111,276 @@ function AdminHub() {
           </CardContent>
         </Card>
       </div>
+    </div>
+  )
+}
+
+// ── Shared: Client Detail Dialog (admin) ───────────────────────────────────
+function ClientDetailDialog({ open, client, lessons, onOpenChange }: {
+  open: boolean
+  client: Client | null
+  lessons: ActualLesson[]
+  onOpenChange: (open: boolean) => void
+}) {
+  const lessonById = useMemo(() => {
+    const m = new Map<string, ActualLesson>()
+    for (const l of lessons) m.set(l.id, l)
+    return m
+  }, [lessons])
+
+  const activeSubs = useMemo(() => listActiveSubscriptions(client), [client])
+  const expiredSubs = useMemo(() => {
+    if (!client) return []
+    const activeIds = new Set(activeSubs.map(s => s.id))
+    return client.subscriptions.filter(s => !activeIds.has(s.id))
+  }, [client, activeSubs])
+
+  const sortedBookings = useMemo(() => {
+    if (!client) return []
+    return [...client.bookings].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+  }, [client])
+
+  const { upcoming, past } = useMemo(() => {
+    const now = Date.now()
+    const u: ClientBookingRecord[] = []
+    const p: ClientBookingRecord[] = []
+    for (const b of sortedBookings) {
+      const l = lessonById.get(b.lessonId)
+      if (l && l.start_timestamp.getTime() >= now) u.push(b)
+      else p.push(b)
+    }
+    u.sort((a, b) => {
+      const la = lessonById.get(a.lessonId)?.start_timestamp.getTime() ?? 0
+      const lb = lessonById.get(b.lessonId)?.start_timestamp.getTime() ?? 0
+      return la - lb
+    })
+    return { upcoming: u, past: p }
+  }, [sortedBookings, lessonById])
+
+  return (
+    <Dialog open={open && !!client} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+        {client && (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-full bg-brand-gold/20 text-brand-gold flex items-center justify-center text-base font-bold ring-1 ring-brand-gold/35">
+                  {(client.name || client.email || '?').slice(0, 1).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-lg font-bold truncate">{client.name || '—'}</p>
+                  <p className="text-[10px] text-muted-foreground font-normal truncate">ID: {client.id}</p>
+                </div>
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                <div className="flex items-center gap-2 bg-muted/30 rounded-md p-2.5 min-w-0">
+                  <Mail className="w-4 h-4 text-brand-gold shrink-0" />
+                  {client.email ? (
+                    <a href={`mailto:${client.email}`} className="text-foreground hover:underline truncate">{client.email}</a>
+                  ) : <span className="text-muted-foreground">—</span>}
+                </div>
+                <div className="flex items-center gap-2 bg-muted/30 rounded-md p-2.5 min-w-0">
+                  <Phone className="w-4 h-4 text-brand-gold shrink-0" />
+                  {client.phone ? (
+                    <a href={`tel:${client.phone}`} className="text-foreground hover:underline truncate">{client.phone}</a>
+                  ) : <span className="text-muted-foreground">—</span>}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="bg-muted/30 rounded-md p-3">
+                  <p className="text-2xl font-bold text-brand-gold">{client.bookings.length}</p>
+                  <p className="text-[10px] uppercase text-muted-foreground tracking-wide mt-0.5">Записів</p>
+                </div>
+                <div className="bg-muted/30 rounded-md p-3">
+                  <p className="text-2xl font-bold text-brand-gold">{upcoming.length}</p>
+                  <p className="text-[10px] uppercase text-muted-foreground tracking-wide mt-0.5">Майбутніх</p>
+                </div>
+                <div className="bg-muted/30 rounded-md p-3">
+                  <p className="text-2xl font-bold text-brand-gold">{activeSubs.length}</p>
+                  <p className="text-[10px] uppercase text-muted-foreground tracking-wide mt-0.5">Активних абон.</p>
+                </div>
+              </div>
+
+              <section>
+                <h4 className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-2">Абонементи</h4>
+                {activeSubs.length === 0 && expiredSubs.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">Немає</p>
+                ) : (
+                  <div className="space-y-2">
+                    {activeSubs.map(s => (
+                      <div key={s.id} className="flex items-center justify-between gap-3 rounded-lg border border-brand-gold/30 bg-brand-gold/5 p-3">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-sm truncate">{s.plan_name}{isGiftLikeSubscription(s) ? ' · Подарунок' : ''}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{s.used_sessions} / {s.total_sessions} · до {format(new Date(s.expires_at), 'dd.MM.yyyy')}</p>
+                        </div>
+                        <Badge className="bg-brand-gold text-brand-charcoal border-0 text-[10px] shrink-0">Активний</Badge>
+                      </div>
+                    ))}
+                    {expiredSubs.map(s => (
+                      <div key={s.id} className="flex items-center justify-between gap-3 rounded-lg border border-white/[0.06] bg-muted/20 p-3 opacity-75">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-sm truncate">{s.plan_name}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{s.used_sessions} / {s.total_sessions} · до {format(new Date(s.expires_at), 'dd.MM.yyyy')}</p>
+                        </div>
+                        <Badge variant="outline" className="text-[10px] shrink-0">Завершено</Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h4 className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-2">Майбутні записи ({upcoming.length})</h4>
+                {upcoming.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">Немає</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {upcoming.map((b, i) => {
+                      const lesson = lessonById.get(b.lessonId)
+                      const kindLabel = b.subscription_kind === 'gift' ? 'подарунковий абонемент' : b.subscription_kind === 'paid' ? 'оплачений абонемент' : 'разове'
+                      return (
+                        <div key={`${b.lessonId}-${i}`} className="rounded-md border border-white/[0.07] bg-muted/30 p-2.5 text-xs">
+                          <p className="font-semibold text-foreground">{b.className}</p>
+                          <p className="text-muted-foreground mt-0.5">
+                            {lesson
+                              ? `${format(lesson.start_timestamp, 'EEEE, d MMMM · HH:mm', { locale: uk })} – ${format(lesson.end_timestamp, 'HH:mm')}`
+                              : format(new Date(b.date), 'dd.MM.yyyy HH:mm')}
+                          </p>
+                          <p className="text-muted-foreground/80 mt-0.5">{b.trainerName} · {kindLabel}</p>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h4 className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-2">Історія ({past.length})</h4>
+                {past.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">Немає</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                    {past.map((b, i) => {
+                      const lesson = lessonById.get(b.lessonId)
+                      const kindLabel = b.subscription_kind === 'gift' ? 'подарунок' : b.subscription_kind === 'paid' ? 'абонемент' : 'разове'
+                      return (
+                        <div key={`${b.lessonId}-${i}`} className="rounded-md border border-white/[0.06] bg-muted/20 p-2 text-xs opacity-95">
+                          <p className="font-semibold text-foreground">{b.className}</p>
+                          <p className="text-muted-foreground mt-0.5">
+                            {lesson ? format(lesson.start_timestamp, 'd MMM yyyy · HH:mm', { locale: uk }) : format(new Date(b.date), 'dd.MM.yyyy')}
+                          </p>
+                          <p className="text-muted-foreground/70 mt-0.5">{b.trainerName} · {kindLabel}</p>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </section>
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>Закрити</Button>
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function findClientForSignup(signup: studioApi.LessonSignup, clients: Client[]): Client | null {
+  if (signup.client_user_id) {
+    const byId = clients.find(c => c.id === signup.client_user_id)
+    if (byId) return byId
+  }
+  const emailLower = signup.email.trim().toLowerCase()
+  return clients.find(c => c.email.trim().toLowerCase() === emailLower) || null
+}
+
+// ── Page: Admin Clients (List + Detail) ─────────────────────────────────────
+function AdminClientsPage({ clients, lessons }: { clients: Client[]; lessons: ActualLesson[] }) {
+  const navigate = useNavigate()
+  const [searchTerm, setSearchTerm] = useState('')
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null)
+
+  const filtered = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase()
+    const sorted = [...clients].sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email, 'uk'))
+    if (!q) return sorted
+    return sorted.filter(c =>
+      c.name.toLowerCase().includes(q) ||
+      c.email.toLowerCase().includes(q) ||
+      (c.phone || '').toLowerCase().includes(q),
+    )
+  }, [clients, searchTerm])
+
+  return (
+    <div className="flex-1 flex flex-col p-4 sm:p-8">
+      <Button variant="ghost" onClick={() => navigate('/admin')} className="mb-4 self-start">← Назад у меню</Button>
+
+      <div className="border-b border-border pb-4 mb-4">
+        <h1 className="text-2xl font-bold flex items-center gap-2 text-foreground">
+          <Users className="w-6 h-6 text-brand-gold" /> Клієнти
+        </h1>
+        <p className="text-sm text-muted-foreground">Усі клієнти, які зареєстровані на платформі</p>
+      </div>
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+        <input
+          type="text"
+          value={searchTerm}
+          onChange={e => setSearchTerm(e.target.value)}
+          placeholder="Пошук за ім'ям, email або телефоном…"
+          className={cn(inputClasses, "sm:max-w-md")}
+          aria-label="Пошук клієнтів"
+        />
+        <p className="text-xs text-muted-foreground tabular-nums">{filtered.length} {filtered.length === 1 ? 'клієнт' : 'клієнтів'}</p>
+      </div>
+
+      <Card className="border-white/[0.07] bg-muted/20">
+        <CardContent className="p-0 divide-y divide-white/[0.05]">
+          {filtered.length === 0 ? (
+            <div className="py-16 text-center text-muted-foreground">
+              <p className="text-sm">{searchTerm ? 'Нічого не знайдено' : 'Ще немає клієнтів'}</p>
+            </div>
+          ) : filtered.map(c => {
+            const activeSubs = listActiveSubscriptions(c)
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => setSelectedClient(c)}
+                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/40 text-left transition-colors"
+              >
+                <div className="w-10 h-10 rounded-full bg-brand-gold/15 text-brand-gold flex items-center justify-center font-bold text-sm ring-1 ring-brand-gold/25 shrink-0">
+                  {(c.name || c.email || '?').slice(0, 1).toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm text-foreground truncate">{c.name || '—'}</p>
+                  <p className="text-xs text-muted-foreground truncate">{c.email}{c.phone ? ` · ${c.phone}` : ''}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-xs text-muted-foreground tabular-nums">{c.bookings.length} записів</p>
+                  {activeSubs.length > 0 && (
+                    <p className="text-[10px] text-brand-gold font-semibold uppercase tracking-wide mt-0.5">Абонемент</p>
+                  )}
+                </div>
+              </button>
+            )
+          })}
+        </CardContent>
+      </Card>
+
+      <ClientDetailDialog
+        open={!!selectedClient}
+        client={selectedClient}
+        lessons={lessons}
+        onOpenChange={(o) => { if (!o) setSelectedClient(null) }}
+      />
     </div>
   )
 }
@@ -2687,12 +3453,34 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
 }
 
 // ── Page: Admin Schedule Builder ─────────────────────────────────────────────
-function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData, setLessons }: { lessons: ActualLesson[], trainers: string[], classTypes: string[], reloadAppData: () => Promise<void>, setLessons: React.Dispatch<React.SetStateAction<ActualLesson[]>> }) {
+function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppData, setLessons }: { lessons: ActualLesson[], clients: Client[], trainers: string[], classTypes: string[], reloadAppData: () => Promise<void>, setLessons: React.Dispatch<React.SetStateAction<ActualLesson[]>> }) {
   const navigate = useNavigate()
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date())
   const [weekPickerOpen, setWeekPickerOpen] = useState(false)
   const [pickerMonth, setPickerMonth] = useState<Date>(() => startOfMonth(new Date()))
   const [isExporting, setIsExporting] = useState(false)
+
+  const [signupsLesson, setSignupsLesson] = useState<ActualLesson | null>(null)
+  const [signups, setSignups] = useState<studioApi.LessonSignup[]>([])
+  const [signupsLoading, setSignupsLoading] = useState(false)
+  const [signupsError, setSignupsError] = useState<string | null>(null)
+  const [detailClient, setDetailClient] = useState<Client | null>(null)
+
+  const openSignupsFor = useCallback((lesson: ActualLesson) => {
+    setSignups([])
+    setSignupsError(null)
+    setSignupsLoading(true)
+    setSignupsLesson(lesson)
+  }, [])
+
+  useEffect(() => {
+    if (!signupsLesson) return
+    let cancelled = false
+    studioApi.fetchLessonSignups(signupsLesson.id)
+      .then(rows => { if (!cancelled) { setSignups(rows); setSignupsLoading(false) } })
+      .catch(err => { if (!cancelled) { setSignupsError(err instanceof Error ? err.message : 'Помилка завантаження'); setSignupsLoading(false) } })
+    return () => { cancelled = true }
+  }, [signupsLesson])
 
   const [targetDateForNewLesson, setTargetDateForNewLesson] = useState<Date>(new Date())
   const [isAddLessonOpen, setIsAddLessonOpen] = useState(false)
@@ -2968,7 +3756,16 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData, setLe
                     <p className={cn("font-bold text-foreground leading-tight pr-12", isCancelled && "line-through")}>{l.class_name}</p>
                     <p className="text-muted-foreground mt-1 font-medium">{format(l.start_timestamp, 'HH:mm')} - {format(l.end_timestamp, 'HH:mm')}</p>
                     <p className="text-muted-foreground/90 mt-0.5">{l.trainer_name}</p>
-                    <p className="text-muted-foreground/90 mt-0.5 flex items-center gap-1"><Users className="w-3 h-3" />{l.booked_count} / {l.capacity}</p>
+                    <button
+                      type="button"
+                      onClick={() => openSignupsFor(l)}
+                      className="text-muted-foreground/90 mt-0.5 flex items-center gap-1 hover:text-brand-gold transition-colors group/btn"
+                      aria-label={`Переглянути записаних на ${l.class_name}`}
+                    >
+                      <Users className="w-3 h-3" />
+                      <span className="tabular-nums">{l.booked_count} / {l.capacity}</span>
+                      <span className="opacity-0 group-hover/btn:opacity-100 text-brand-gold/80 ml-0.5 transition-opacity">›</span>
+                    </button>
                     <p className="text-muted-foreground/90 mt-0.5">{l.single_visit_price}₴ / разове</p>
                     {isCancelled && <p className="mt-1 text-[10px] uppercase tracking-wide text-red-400 font-bold">Скасовано</p>}
                     <button type="button" aria-label="Редагувати заняття" onClick={() => openEditLesson(l)} className="absolute top-1 right-7 w-5 h-5 rounded-md bg-brand-gold/15 text-brand-gold flex items-center justify-center hover:bg-brand-gold/25">
@@ -3093,6 +3890,76 @@ function AdminSchedulePage({ lessons, trainers, classTypes, reloadAppData, setLe
           )}
         </DialogContent>
       </Dialog>
+
+      <Dialog open={!!signupsLesson} onOpenChange={(o) => { if (!o) setSignupsLesson(null) }}>
+        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-start gap-2">
+              <Users className="w-5 h-5 text-brand-gold mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <p className="font-bold truncate">{signupsLesson?.class_name}</p>
+                <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                  {signupsLesson && `${format(signupsLesson.start_timestamp, 'EEEE, d MMMM · HH:mm', { locale: uk })}`}
+                </p>
+              </div>
+            </DialogTitle>
+          </DialogHeader>
+
+          {signupsLoading ? (
+            <p className="text-sm text-muted-foreground py-6 text-center">Завантаження…</p>
+          ) : signupsError ? (
+            <div className="py-4 px-3 rounded-md bg-red-950/40 border border-red-500/25 text-sm text-red-200">{signupsError}</div>
+          ) : signups.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-6 text-center">Поки немає записаних</p>
+          ) : (
+            <div className="space-y-1.5">
+              <p className="text-xs text-muted-foreground mb-2">{signups.length} {signups.length === 1 ? 'запис' : 'записів'}</p>
+              {signups.map(s => {
+                const linkedClient = findClientForSignup(s, clients)
+                const kindLabel = s.subscription_kind === 'gift' ? 'Подарунок' : s.subscription_kind === 'paid' ? 'Абонемент' : 'Разово'
+                const kindColor = s.subscription_kind === 'gift' ? 'bg-purple-500/20 text-purple-200' : s.subscription_kind === 'paid' ? 'bg-brand-gold/20 text-brand-gold' : 'bg-white/10 text-muted-foreground'
+                return (
+                  <button
+                    key={s.bookingId}
+                    type="button"
+                    disabled={!linkedClient}
+                    onClick={() => linkedClient && setDetailClient(linkedClient)}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-md border border-white/[0.06] bg-muted/25 text-left transition-colors",
+                      linkedClient ? "hover:bg-muted/50 hover:border-brand-gold/40 cursor-pointer" : "opacity-70 cursor-not-allowed"
+                    )}
+                  >
+                    <div className="w-9 h-9 rounded-full bg-brand-gold/15 text-brand-gold flex items-center justify-center font-bold text-sm ring-1 ring-brand-gold/25 shrink-0">
+                      {(s.name || s.email || '?').slice(0, 1).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm text-foreground truncate">{s.name || '—'}</p>
+                      <p className="text-xs text-muted-foreground truncate">{s.email}{s.phone ? ` · ${s.phone}` : ''}</p>
+                    </div>
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <span className={cn("text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded", kindColor)}>{kindLabel}</span>
+                      {!s.client_user_id && !linkedClient && (
+                        <span className="text-[9px] text-muted-foreground/70 uppercase">Гість</span>
+                      )}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSignupsLesson(null)}>Закрити</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ClientDetailDialog
+        open={!!detailClient}
+        client={detailClient}
+        lessons={lessons}
+        onOpenChange={(o) => { if (!o) setDetailClient(null) }}
+      />
     </div>
   )
 }
@@ -3224,11 +4091,15 @@ export default function App() {
         <Route path="/cancel/:id" element={<CancelBookingPage reloadAppData={reloadAppData} />} />
         <Route path="/auth" element={<AuthPage setCurrentClientId={setCurrentClientId} reloadAppData={reloadAppData} />} />
         <Route path="/dashboard" element={<ClientDashboardPage currentClient={currentClient} onClientLogout={handleClientLogout} plans={plans} promoCodes={promoCodes} reloadAppData={reloadAppData} />} />
+        <Route path="/offer" element={<PublicOfferPage />} />
+        <Route path="/refunds" element={<RefundsPage />} />
+        <Route path="/payment/result" element={<PaymentResultPage reloadAppData={reloadAppData} />} />
 
         {/* Admin Section */}
         <Route path="/admin" element={<AdminLayout isAdminLogged={isAdminLogged} setIsAdminLogged={setIsAdminLogged} onAdminLogout={endAdminSession} onAdminLoggedIn={reloadAppData} />}>
           <Route index element={<AdminHub />} />
-          <Route path="schedule" element={<AdminSchedulePage lessons={lessons} trainers={trainers} classTypes={classTypes} reloadAppData={reloadAppData} setLessons={setLessons} />} />
+          <Route path="schedule" element={<AdminSchedulePage lessons={lessons} clients={clients} trainers={trainers} classTypes={classTypes} reloadAppData={reloadAppData} setLessons={setLessons} />} />
+          <Route path="clients" element={<AdminClientsPage clients={clients} lessons={lessons} />} />
           <Route path="settings" element={<AdminSettingsPage trainers={trainers} classTypes={classTypes} plans={plans} promoCodes={promoCodes} reloadAppData={reloadAppData} />} />
           <Route path="stats" element={<AdminStatsPage lessons={lessons} clients={clients} trainers={trainers} plans={plans} />} />
         </Route>

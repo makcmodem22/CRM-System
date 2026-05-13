@@ -7,13 +7,27 @@ import {
   deleteLessonAction,
   updateLessonAction,
   upsertStudioClientAction,
-  putClientSubscriptionsAction,
+  purchasePlanAction,
   postBookingAction,
   postBookingWithSubscriptionAction,
   cancelBookingAction,
   fetchLessonForCancelAction,
   redeemPromoAction,
+  listLessonSignupsAction,
+  getPaymentStatusAction,
 } from '@/app/actions/studio'
+
+export type LessonSignup = {
+  bookingId: string
+  lessonId: string
+  client_user_id: string | null
+  name: string
+  email: string
+  phone: string
+  created_at: string
+  subscription_kind?: 'paid' | 'gift'
+  subscription_id?: string
+}
 
 export type BootstrapPayload = {
   lessons: Array<{
@@ -86,11 +100,22 @@ export async function upsertStudioClient(body: { name: string; phone: string }) 
   return upsertStudioClientAction(body)
 }
 
-export async function putClientSubscriptions(subscriptions: unknown[]) {
-  return putClientSubscriptionsAction(subscriptions)
+export async function purchasePlanOnServer(planId: string): Promise<{ ok: true; orderId: string; checkoutUrl: string }> {
+  return purchasePlanAction({ planId })
 }
 
-export async function postBooking(body: { lessonId: string; meta?: Record<string, unknown> | null }) {
+export type PaymentStatusPayload = {
+  status: 'CREATED' | 'SUCCESS' | 'FAILED' | 'REFUNDED'
+  purpose: 'single_visit' | 'plan_purchase'
+  amount: number
+  bookingId: string | null
+}
+
+export async function fetchPaymentStatus(orderId: string): Promise<PaymentStatusPayload> {
+  return getPaymentStatusAction({ orderId })
+}
+
+export async function postBooking(body: { lessonId: string }): Promise<{ ok: true; orderId: string; checkoutUrl: string }> {
   return postBookingAction(body)
 }
 
@@ -112,4 +137,8 @@ export async function fetchLessonForCancel(args: { lessonId: string; token: stri
 
 export async function redeemPromoOnServer(body: { code: string }) {
   return redeemPromoAction(body)
+}
+
+export async function fetchLessonSignups(lessonId: string): Promise<LessonSignup[]> {
+  return listLessonSignupsAction(lessonId)
 }

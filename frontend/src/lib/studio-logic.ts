@@ -1,6 +1,7 @@
 import 'server-only'
 /** Must run before `@prisma/client` so Prisma never initializes without `DATABASE_URL`. */
 import '@/lib/env-bootstrap'
+import { randomUUID } from 'crypto'
 import { Prisma } from '@prisma/client'
 import type { PrismaClient } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
@@ -144,6 +145,7 @@ function shapeBookings(
 async function buildAdminClientsPayload(p: PrismaClient = prisma): Promise<ClientPayload[]> {
   const studioClients = await p.studioClient.findMany()
   const bookings = await p.publicLessonBooking.findMany({
+    where: { status: 'CONFIRMED' },
     include: { lesson: true },
     orderBy: { created_at: 'desc' },
   })
@@ -184,6 +186,7 @@ async function buildSingleClientPayload(userId: string, p: PrismaClient = prisma
   const emailLower = sc.email.trim().toLowerCase()
   const myBookings = await p.publicLessonBooking.findMany({
     where: {
+      status: 'CONFIRMED',
       OR: [
         { client_user_id: sc.id },
         { client_email: { equals: sc.email, mode: 'insensitive' } },
@@ -208,6 +211,48 @@ async function buildSingleClientPayload(userId: string, p: PrismaClient = prisma
       ),
     },
   ]
+}
+
+export type LessonSignup = {
+  bookingId: string
+  lessonId: string
+  client_user_id: string | null
+  name: string
+  email: string
+  phone: string
+  created_at: string
+  subscription_kind?: 'paid' | 'gift'
+  subscription_id?: string
+}
+
+/** Admin-only. Returns every booking row on a lesson, including guest bookings (client_user_id=null). */
+export async function listLessonSignups(lessonId: string): Promise<LessonSignup[]> {
+  const rows = await prisma.publicLessonBooking.findMany({
+    where: { lesson_id: String(lessonId), status: 'CONFIRMED' },
+    orderBy: { created_at: 'asc' },
+  })
+  const userIds = Array.from(new Set(rows.map(r => r.client_user_id).filter((v): v is string => !!v)))
+  const emails = Array.from(new Set(rows.map(r => r.client_email.trim().toLowerCase())))
+  const studioClients = await prisma.studioClient.findMany({
+    where: { OR: [{ id: { in: userIds } }, { email: { in: emails, mode: 'insensitive' } }] },
+  })
+  const byId = new Map(studioClients.map(c => [c.id, c]))
+  const byEmail = new Map(studioClients.map(c => [c.email.trim().toLowerCase(), c]))
+  return rows.map(r => {
+    const sc = (r.client_user_id ? byId.get(r.client_user_id) : null) ?? byEmail.get(r.client_email.trim().toLowerCase()) ?? null
+    const meta = (r.meta || {}) as ClientBookingMeta
+    return {
+      bookingId: r.id,
+      lessonId: r.lesson_id,
+      client_user_id: r.client_user_id,
+      name: sc?.name || r.client_name,
+      email: sc?.email || r.client_email,
+      phone: sc?.phone || '',
+      created_at: r.created_at.toISOString(),
+      subscription_kind: meta.subscription_kind,
+      subscription_id: meta.subscription_id,
+    }
+  })
 }
 
 const LESSON_HISTORY_DAYS = 30
@@ -400,11 +445,359 @@ export async function ensureStudioClientForUser(user: { id: string; email: strin
   })
 }
 
-export async function putClientSubscriptionsRow(clientId: string, subscriptions: unknown[]) {
-  await prisma.studioClient.update({
-    where: { id: clientId },
-    data: { subscriptions_json: subscriptions as Prisma.InputJsonValue },
+// ── Payment lifecycle (LiqPay) ──────────────────────────────────────────────
+
+// 60 min covers LiqPay's 3DS / bank-callback window. Shorter values risk the sweeper
+// failing a payment while the bank is still authorising it; longer values just hold the slot.
+const PENDING_PAYMENT_TTL_MS = 60 * 60 * 1000
+
+export type StudioPaymentPurpose = 'single_visit' | 'plan_purchase'
+
+export type PaymentCreated = {
+  paymentId: string
+  orderId: string
+  amount: number
+  currency: string
+}
+
+/**
+ * Atomically holds the slot via a PENDING_PAYMENT booking and creates a StudioPayment row
+ * carrying the lesson's price snapshot. Caller turns the returned orderId/amount into a
+ * LiqPay checkout URL. Re-uses the same conditional-update pattern as `postBookingRow` so
+ * two concurrent checkouts can't oversell.
+ */
+export async function createSingleVisitPayment(args: {
+  lessonId: string
+  userId: string
+  email: string
+  name: string
+}): Promise<PaymentCreated & { lessonStartTimestamp: Date }> {
+  return prisma.$transaction(async tx => {
+    const reserved = await tx.$executeRaw`
+      UPDATE public_lesson
+      SET booked_count = booked_count + 1
+      WHERE id = ${args.lessonId}
+        AND status = 'SCHEDULED'
+        AND booked_count < capacity
+    `
+    if (reserved === 0) {
+      const lesson = await tx.publicLesson.findUnique({ where: { id: args.lessonId } })
+      if (!lesson) throw new Error('Lesson not found')
+      if (lesson.status !== 'SCHEDULED') throw new Error('Class is not available for booking')
+      throw new Error('Class is full')
+    }
+    const lesson = await tx.publicLesson.findUnique({ where: { id: args.lessonId } })
+    if (!lesson) throw new Error('Lesson not found')
+    // Mirrors the cancel lockout: don't open new paid bookings inside the 2-hour window,
+    // because the user might not finish payment in time and the auto-cancel cron may
+    // cancel the lesson out from under them.
+    if (lesson.start_timestamp.getTime() - Date.now() < CANCEL_LOCKOUT_MS) {
+      throw new Error('Запис недоступний менш ніж за 2 години до початку')
+    }
+    const amount = Math.max(0, Math.round(lesson.single_visit_price))
+    if (amount <= 0) throw new Error('Lesson is misconfigured: missing single_visit_price')
+
+    const booking = await tx.publicLessonBooking.create({
+      data: {
+        lesson_id: args.lessonId,
+        client_user_id: args.userId,
+        client_email: args.email.trim(),
+        client_name: (args.name || 'Гість').trim(),
+        status: 'PENDING_PAYMENT',
+      },
+    })
+
+    const orderId = `bv-${randomUUID()}`
+    const payment = await tx.studioPayment.create({
+      data: {
+        id: randomUUID(),
+        liqpay_order_id: orderId,
+        amount,
+        currency: 'UAH',
+        status: 'CREATED',
+        purpose: 'single_visit',
+        booking_id: booking.id,
+        client_user_id: args.userId,
+        client_email: args.email,
+        meta: {
+          lesson_id: args.lessonId,
+          lesson_start: lesson.start_timestamp.toISOString(),
+        } as Prisma.InputJsonValue,
+      },
+    })
+    return {
+      paymentId: payment.id,
+      orderId: payment.liqpay_order_id,
+      amount: payment.amount,
+      currency: payment.currency,
+      lessonStartTimestamp: lesson.start_timestamp,
+    }
   })
+}
+
+/**
+ * Snapshot the plan as it exists right now (price/sessions/duration) into the payment row.
+ * On successful callback we grant the subscription from that snapshot, so an admin who later
+ * edits or removes the plan cannot change what the user actually pays for.
+ */
+export async function createPlanPurchasePayment(args: {
+  planId: string
+  userId: string
+  email: string
+}): Promise<PaymentCreated> {
+  const cfg = await ensureStudioConfig()
+  const plans = asPlanArray(cfg.plans_json)
+  const plan = plans.find(p => p.id === args.planId)
+  if (!plan) throw new Error('Unknown plan')
+  const amount = Math.max(0, Math.round(Number(plan.price) || 0))
+  if (amount <= 0) throw new Error('Plan has invalid price')
+  const snapshot = {
+    id: plan.id,
+    name: String(plan.name || plan.id),
+    sessions: Math.max(1, Math.round(Number(plan.sessions) || 0)),
+    price: amount,
+    duration_days: Math.max(1, Math.round(Number(plan.duration_days) || 0)),
+  }
+  const orderId = `pp-${randomUUID()}`
+  const payment = await prisma.studioPayment.create({
+    data: {
+      id: randomUUID(),
+      liqpay_order_id: orderId,
+      amount,
+      currency: 'UAH',
+      status: 'CREATED',
+      purpose: 'plan_purchase',
+      client_user_id: args.userId,
+      client_email: args.email,
+      plan_id: plan.id,
+      plan_snapshot: snapshot as Prisma.InputJsonValue,
+    },
+  })
+  return {
+    paymentId: payment.id,
+    orderId: payment.liqpay_order_id,
+    amount: payment.amount,
+    currency: payment.currency,
+  }
+}
+
+export type PaidEmailContext = {
+  to: string
+  clientName: string
+  className: string
+  trainerName: string
+  startTimestamp: Date
+  endTimestamp: Date
+  lessonId: string
+  bookingId: string
+}
+
+/**
+ * Mark a payment SUCCESS and run side effects. Idempotent — if the payment is already SUCCESS,
+ * just returns the existing context. The action layer is responsible for sending the
+ * confirmation email outside the DB transaction so an email failure doesn't roll back state.
+ */
+export async function handleLiqpayPaidPayment(
+  paymentId: string,
+  ctx: { liqpayPaymentId?: string | null },
+): Promise<{
+  purpose: StudioPaymentPurpose
+  alreadyProcessed: boolean
+  bookingId?: string
+  subscriptionId?: string
+  emailContext?: PaidEmailContext
+}> {
+  return prisma.$transaction(async tx => {
+    // Atomic CREATED → SUCCESS state transition. Only one concurrent caller wins this
+    // updateMany; the rest see count=0 and return alreadyProcessed. This is what makes the
+    // function safe under LiqPay's retry behaviour where two webhook deliveries can race.
+    const paidAt = new Date()
+    const flipped = await tx.studioPayment.updateMany({
+      where: { id: paymentId, status: 'CREATED' },
+      data: {
+        status: 'SUCCESS',
+        paid_at: paidAt,
+        ...(ctx.liqpayPaymentId ? { liqpay_payment_id: ctx.liqpayPaymentId } : {}),
+      },
+    })
+
+    if (flipped.count === 0) {
+      const existing = await tx.studioPayment.findUnique({ where: { id: paymentId } })
+      if (!existing) throw new Error('Payment not found')
+      if (existing.status === 'SUCCESS') {
+        return {
+          purpose: existing.purpose as StudioPaymentPurpose,
+          alreadyProcessed: true,
+          bookingId: existing.booking_id ?? undefined,
+        }
+      }
+      throw new Error(`Cannot mark ${existing.status} payment as paid`)
+    }
+
+    const payment = await tx.studioPayment.findUnique({ where: { id: paymentId } })
+    if (!payment) throw new Error('Payment vanished after state flip')
+
+    if (payment.purpose === 'single_visit') {
+      if (!payment.booking_id) throw new Error('single_visit payment missing booking_id')
+      const booking = await tx.publicLessonBooking.findUnique({
+        where: { id: payment.booking_id },
+        include: { lesson: true },
+      })
+      if (!booking) throw new Error('Booking not found')
+      if (booking.status === 'PENDING_PAYMENT') {
+        await tx.publicLessonBooking.update({
+          where: { id: booking.id },
+          data: { status: 'CONFIRMED' },
+        })
+      }
+      return {
+        purpose: 'single_visit',
+        alreadyProcessed: false,
+        bookingId: booking.id,
+        emailContext: {
+          to: booking.client_email,
+          clientName: booking.client_name || 'Гість',
+          className: booking.lesson.class_name,
+          trainerName: booking.lesson.trainer_name,
+          startTimestamp: booking.lesson.start_timestamp,
+          endTimestamp: booking.lesson.end_timestamp,
+          lessonId: booking.lesson.id,
+          bookingId: booking.id,
+        },
+      }
+    }
+
+    if (payment.purpose === 'plan_purchase') {
+      if (!payment.client_user_id) throw new Error('plan_purchase payment missing client_user_id')
+      const snap = (payment.plan_snapshot || {}) as {
+        id?: string; name?: string; sessions?: number; duration_days?: number; price?: number
+      }
+      const total = Math.max(1, Math.round(Number(snap.sessions) || 0))
+      const days = Math.max(1, Math.round(Number(snap.duration_days) || 0))
+      const now = new Date()
+      const newSub: ClientSub = {
+        id: randomUUID(),
+        plan_id: String(snap.id || payment.plan_id || 'unknown'),
+        plan_name: String(snap.name || snap.id || 'Plan'),
+        total_sessions: total,
+        used_sessions: 0,
+        purchased_at: now.toISOString(),
+        expires_at: new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString(),
+        source: 'purchase',
+      }
+      const client = await tx.studioClient.findUnique({ where: { id: payment.client_user_id } })
+      if (!client) throw new Error('Client not found')
+      const existing = (client.subscriptions_json as unknown as ClientSub[]) || []
+      await tx.studioClient.update({
+        where: { id: payment.client_user_id },
+        data: { subscriptions_json: [...existing, newSub] as Prisma.InputJsonValue },
+      })
+      const baseMeta = (payment.meta && typeof payment.meta === 'object' ? payment.meta as Record<string, unknown> : {})
+      await tx.studioPayment.update({
+        where: { id: payment.id },
+        data: { meta: { ...baseMeta, subscription_id: newSub.id } as Prisma.InputJsonValue },
+      })
+      return { purpose: 'plan_purchase', alreadyProcessed: false, subscriptionId: newSub.id }
+    }
+
+    throw new Error(`Unknown payment purpose: ${payment.purpose}`)
+  })
+}
+
+/**
+ * Mark payment FAILED and release the held slot (single_visit) by deleting the
+ * PENDING_PAYMENT booking and decrementing booked_count. Idempotent.
+ */
+export async function handleLiqpayFailedPayment(
+  paymentId: string,
+  ctx: { liqpayStatus?: string },
+): Promise<void> {
+  await prisma.$transaction(async tx => {
+    const payment = await tx.studioPayment.findUnique({ where: { id: paymentId } })
+    if (!payment) throw new Error('Payment not found')
+    if (payment.status === 'FAILED') return
+    if (payment.status === 'SUCCESS' || payment.status === 'REFUNDED') {
+      throw new Error(`Cannot mark ${payment.status} payment as failed`)
+    }
+
+    if (payment.purpose === 'single_visit' && payment.booking_id) {
+      const booking = await tx.publicLessonBooking.findUnique({ where: { id: payment.booking_id } })
+      if (booking && booking.status === 'PENDING_PAYMENT') {
+        await tx.publicLessonBooking.delete({ where: { id: booking.id } })
+        await tx.publicLesson.updateMany({
+          where: { id: booking.lesson_id, booked_count: { gt: 0 } },
+          data: { booked_count: { decrement: 1 } },
+        })
+      }
+    }
+    const baseMeta = (payment.meta && typeof payment.meta === 'object' ? payment.meta as Record<string, unknown> : {})
+    await tx.studioPayment.update({
+      where: { id: payment.id },
+      data: {
+        status: 'FAILED',
+        meta: { ...baseMeta, liqpay_status: ctx.liqpayStatus } as Prisma.InputJsonValue,
+      },
+    })
+  })
+}
+
+/** For the post-checkout result page: scoped to caller's own payments. Returns null if not theirs. */
+export async function getPaymentStatusForOrder(
+  orderId: string,
+  callerUserId: string,
+): Promise<{
+  status: 'CREATED' | 'SUCCESS' | 'FAILED' | 'REFUNDED'
+  purpose: StudioPaymentPurpose
+  amount: number
+  bookingId: string | null
+} | null> {
+  const p = await prisma.studioPayment.findUnique({ where: { liqpay_order_id: orderId } })
+  if (!p) return null
+  if (p.client_user_id && p.client_user_id !== callerUserId) return null
+  return {
+    status: p.status as 'CREATED' | 'SUCCESS' | 'FAILED' | 'REFUNDED',
+    purpose: p.purpose as StudioPaymentPurpose,
+    amount: p.amount,
+    bookingId: p.booking_id,
+  }
+}
+
+/** Release PENDING_PAYMENT bookings whose payments are older than the TTL (LiqPay checkout window). */
+export async function sweepStalePendingPayments(ttlMs = PENDING_PAYMENT_TTL_MS): Promise<{
+  releasedSlots: number
+  orphansFailed: number
+}> {
+  const cutoff = new Date(Date.now() - ttlMs)
+  let releasedSlots = 0
+  let orphansFailed = 0
+  const stale = await prisma.studioPayment.findMany({
+    where: {
+      status: 'CREATED',
+      purpose: 'single_visit',
+      created_at: { lt: cutoff },
+      booking_id: { not: null },
+    },
+  })
+  for (const p of stale) {
+    try {
+      await handleLiqpayFailedPayment(p.id, { liqpayStatus: 'timeout' })
+      releasedSlots++
+    } catch (err) {
+      console.error('sweepStalePendingPayments: visit failed', { paymentId: p.id, err })
+    }
+  }
+  const orphans = await prisma.studioPayment.findMany({
+    where: { status: 'CREATED', purpose: 'plan_purchase', created_at: { lt: cutoff } },
+  })
+  for (const p of orphans) {
+    try {
+      await prisma.studioPayment.update({ where: { id: p.id }, data: { status: 'FAILED' } })
+      orphansFailed++
+    } catch (err) {
+      console.error('sweepStalePendingPayments: plan failed', { paymentId: p.id, err })
+    }
+  }
+  return { releasedSlots, orphansFailed }
 }
 
 export type CreatedBooking = {
@@ -448,6 +841,7 @@ export async function postBookingRow(body: {
         client_email: body.client_email.trim(),
         client_name: (body.client_name || 'Гість').trim(),
         client_user_id: body.client_user_id || null,
+        status: 'CONFIRMED',
         meta: body.meta ? (body.meta as Prisma.InputJsonValue) : Prisma.JsonNull,
       },
     })
@@ -507,6 +901,7 @@ export async function postBookingWithSubscriptionRow(body: {
         client_email: body.client_email.trim(),
         client_name: (body.client_name || '').trim(),
         client_user_id: body.client_user_id,
+        status: 'CONFIRMED',
         meta: meta as Prisma.InputJsonValue,
       },
     })
@@ -536,6 +931,16 @@ export type CancelledBooking = {
   name: string
 }
 
+/** Thrown when a user/token cancel is attempted within the 2-hour pre-lesson lockout. */
+export class CancelTooLateError extends Error {
+  constructor() {
+    super('Скасування неможливе менш ніж за 2 години до початку заняття.')
+    this.name = 'CancelTooLateError'
+  }
+}
+
+const CANCEL_LOCKOUT_MS = 2 * 60 * 60 * 1000
+
 async function cancelBookingByIdInTx(
   tx: Prisma.TransactionClient,
   bookingId: string,
@@ -545,6 +950,11 @@ async function cancelBookingByIdInTx(
     include: { lesson: true },
   })
   if (!booking) return null
+  // Defense-in-depth: the client UI also blocks <2h cancels, but the server must enforce the
+  // rule so anyone calling the action directly (or holding a cancel-link) can't bypass it.
+  if (booking.lesson.start_timestamp.getTime() - Date.now() < CANCEL_LOCKOUT_MS) {
+    throw new CancelTooLateError()
+  }
   const meta = (booking.meta || {}) as ClientBookingMeta
   if (meta.subscription_id && booking.client_user_id) {
     const client = await tx.studioClient.findUnique({ where: { id: booking.client_user_id } })
@@ -582,7 +992,7 @@ export async function cancelBookingByIdRow(bookingId: string): Promise<Cancelled
   return result
 }
 
-/** Cancel by authenticated owner (uid or verified email match). */
+/** Cancel by authenticated owner (uid or verified email match). Skips PENDING_PAYMENT rows. */
 export async function cancelOwnedBookingRow(
   lessonId: string,
   owner: { userId: string; email: string },
@@ -591,6 +1001,7 @@ export async function cancelOwnedBookingRow(
     const booking = await tx.publicLessonBooking.findFirst({
       where: {
         lesson_id: lessonId,
+        status: 'CONFIRMED',
         OR: [
           { client_user_id: owner.userId },
           { client_email: { equals: owner.email, mode: 'insensitive' } },
