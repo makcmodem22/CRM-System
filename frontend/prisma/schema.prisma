@@ -114,18 +114,51 @@ model PublicLesson {
 }
 
 model PublicLessonBooking {
-  id             String       @id @default(cuid())
+  id             String          @id @default(cuid())
   lesson_id      String
-  lesson         PublicLesson @relation(fields: [lesson_id], references: [id], onDelete: Cascade)
+  lesson         PublicLesson    @relation(fields: [lesson_id], references: [id], onDelete: Cascade)
   client_user_id String?
   client_email   String
   client_name    String
-  created_at     DateTime     @default(now())
+  /// PENDING_PAYMENT | CONFIRMED | CANCELLED | REFUNDED — stored as string to match the migration.
+  status         String          @default("CONFIRMED")
+  created_at     DateTime        @default(now())
   meta           Json?
+  payments       StudioPayment[]
 
   @@index([lesson_id])
   @@index([client_email])
+  @@index([status, created_at])
   @@map("public_lesson_booking")
+}
+
+model StudioPayment {
+  id                String               @id
+  liqpay_order_id   String               @unique
+  liqpay_payment_id String?
+  amount            Int
+  currency          String               @default("UAH")
+  /// CREATED | SUCCESS | FAILED | REFUNDED
+  status            String               @default("CREATED")
+  /// 'single_visit' | 'plan_purchase'
+  purpose           String
+  booking_id        String?
+  booking           PublicLessonBooking? @relation(fields: [booking_id], references: [id], onDelete: SetNull)
+  client_user_id    String?
+  client_email      String
+  plan_id           String?
+  /// Canonical plan as it existed at payment time — used to grant the subscription on success.
+  plan_snapshot     Json?
+  meta              Json?
+  created_at        DateTime             @default(now())
+  updated_at        DateTime             @updatedAt
+  paid_at           DateTime?
+  refunded_at       DateTime?
+
+  @@index([client_email])
+  @@index([booking_id])
+  @@index([status])
+  @@map("studio_payment")
 }
 
 model StudioClient {

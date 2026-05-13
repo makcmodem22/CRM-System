@@ -16,15 +16,20 @@ import {
   deleteLessonById,
   updateLessonById,
   upsertStudioClientRow,
-  putClientSubscriptionsRow,
-  postBookingRow,
+  createSingleVisitPayment,
+  createPlanPurchasePayment,
+  getPaymentStatusForOrder,
   postBookingWithSubscriptionRow,
   cancelBookingByIdRow,
   cancelOwnedBookingRow,
   getLessonForCancelByToken,
   redeemPromoRow,
   ensureStudioClientForUser,
+  listLessonSignups,
+  type LessonSignup,
 } from '@/lib/studio-logic'
+import { buildCheckoutUrl } from '@/lib/liqpay'
+import { publicSiteUrl } from '@/lib/site-url'
 
 const ADMIN_COOKIE = 'brave_admin'
 
@@ -85,6 +90,11 @@ export async function updateLessonAction(id: string, data: Parameters<typeof upd
   return { ok: true as const }
 }
 
+export async function listLessonSignupsAction(lessonId: string): Promise<LessonSignup[]> {
+  await assertAdmin()
+  return listLessonSignups(lessonId)
+}
+
 /** Verified email is taken from the auth session — body.email is ignored to prevent email-hijack. */
 export async function upsertStudioClientAction(body: { name: string; phone: string }) {
   const user = await requireUser()
@@ -97,39 +107,67 @@ export async function upsertStudioClientAction(body: { name: string; phone: stri
   return { ok: true as const }
 }
 
-export async function putClientSubscriptionsAction(subscriptions: unknown[]) {
+/**
+ * Begin a plan-purchase checkout. The caller supplies only `planId`; everything else (price,
+ * sessions, expiry, plan name) is snapshotted server-side from `studio_config.plans_json` so a
+ * hostile client cannot forge what they're paying for. Returns the LiqPay-hosted checkout URL.
+ */
+export async function purchasePlanAction(body: { planId: string }) {
   const user = await requireUser()
-  await putClientSubscriptionsRow(user.id, subscriptions)
-  return { ok: true as const }
+  await rateLimitByIp('purchase', 20, 60_000)
+  const sc = await ensureStudioClientForUser(user)
+  const payment = await createPlanPurchasePayment({
+    planId: body.planId,
+    userId: user.id,
+    email: sc.email,
+  })
+  const site = publicSiteUrl()
+  const checkoutUrl = buildCheckoutUrl({
+    orderId: payment.orderId,
+    amount: payment.amount,
+    description: `Купівля абонементу · ${BUSINESS_NAME}`,
+    serverUrl: `${site}/api/liqpay/callback`,
+    resultUrl: `${site}/payment/result?orderId=${encodeURIComponent(payment.orderId)}`,
+  })
+  return { ok: true as const, orderId: payment.orderId, checkoutUrl }
 }
 
 /**
- * Authenticated single-visit booking. Identity is read from the Supabase session;
- * caller-supplied email/name/user_id are ignored. Server sends the confirmation email.
+ * Begin a single-visit checkout. Identity is read from the Supabase session; caller-supplied
+ * email/name/user_id are ignored. The booking is created in PENDING_PAYMENT state so the slot
+ * is held during checkout; if the user abandons, a sweeper releases it.
  */
-export async function postBookingAction(body: { lessonId: string; meta?: Record<string, unknown> | null }) {
+export async function postBookingAction(body: { lessonId: string }) {
   const user = await requireUser()
   await rateLimitByIp('book', 10, 60_000)
   const sc = await ensureStudioClientForUser(user)
-  const created = await postBookingRow({
+  const payment = await createSingleVisitPayment({
     lessonId: body.lessonId,
-    client_email: sc.email,
-    client_name: sc.name,
-    client_user_id: user.id,
-    meta: body.meta ?? null,
+    userId: user.id,
+    email: sc.email,
+    name: sc.name || 'Гість',
   })
-  await trySendBookingEmail({
-    to: sc.email,
-    clientName: sc.name || 'Гість',
-    className: created.className,
-    startTimestamp: created.startTimestamp,
-    endTimestamp: created.endTimestamp,
-    trainerName: created.trainerName,
-    lessonId: body.lessonId,
-    bookingId: created.bookingId,
+  const site = publicSiteUrl()
+  const checkoutUrl = buildCheckoutUrl({
+    orderId: payment.orderId,
+    amount: payment.amount,
+    description: `Запис на заняття · ${BUSINESS_NAME}`,
+    serverUrl: `${site}/api/liqpay/callback`,
+    resultUrl: `${site}/payment/result?orderId=${encodeURIComponent(payment.orderId)}`,
   })
-  return { ok: true as const, bookingId: created.bookingId }
+  return { ok: true as const, orderId: payment.orderId, checkoutUrl }
 }
+
+/** Frontend polls this on the /payment/result page to know whether the callback has fired. */
+export async function getPaymentStatusAction(body: { orderId: string }) {
+  const user = await requireUser()
+  await rateLimitByIp('payment-status', 60, 60_000)
+  const status = await getPaymentStatusForOrder(body.orderId, user.id)
+  if (!status) throw new Error('Платіж не знайдено')
+  return status
+}
+
+const BUSINESS_NAME = 'Brave.Yoga'
 
 export async function postBookingWithSubscriptionAction(body: {
   lessonId: string
@@ -165,19 +203,16 @@ export async function cancelBookingAction(args: {
   /** Signed cancel token from the confirmation email. When omitted, the caller must be the booking's owner. */
   token?: string
 }) {
+  await rateLimitByIp('cancel', 20, 60_000)
   let cancelled
   if (args.token) {
     const verified = verifyBookingCancelToken(args.token, args.lessonId)
     if (!verified) throw new Error('Invalid or expired cancel link')
+    // `cancelBookingByIdRow` enforces the 2-hour lockout inside its transaction.
     cancelled = await cancelBookingByIdRow(verified.bookingId)
   } else {
     const user = await requireUser()
     cancelled = await cancelOwnedBookingRow(args.lessonId, { userId: user.id, email: user.email })
-  }
-  const hoursLeft = (cancelled.startTimestamp.getTime() - Date.now()) / (1000 * 60 * 60)
-  if (hoursLeft < 2) {
-    // Already committed — reverse is unsafe; keep the cancellation. Surface a warning.
-    console.warn('Cancellation processed within 2h window', { lessonId: args.lessonId })
   }
   try {
     await sendBookingCancelledByClientEmail({
@@ -194,6 +229,7 @@ export async function cancelBookingAction(args: {
 }
 
 export async function fetchLessonForCancelAction(args: { lessonId: string; token: string }) {
+  await rateLimitByIp('cancel-fetch', 30, 60_000)
   const verified = verifyBookingCancelToken(args.token, args.lessonId)
   if (!verified) throw new Error('Invalid or expired cancel link')
   const lesson = await getLessonForCancelByToken(verified.bookingId)
@@ -218,7 +254,7 @@ async function trySendBookingEmail(args: {
   bookingId: string
 }) {
   try {
-    const cancelToken = signBookingCancelToken(args.bookingId, args.lessonId)
+    const cancelToken = signBookingCancelToken(args.bookingId, args.lessonId, args.startTimestamp)
     await sendBookingConfirmationEmail({
       to: args.to,
       clientName: args.clientName,
