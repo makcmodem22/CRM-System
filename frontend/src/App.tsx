@@ -743,8 +743,13 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
     setIsProcessing(true)
     try {
       await studioApi.upsertStudioClient({ name: name || currentClient.name, phone: phone || currentClient.phone || '' })
-      const { checkoutUrl } = await studioApi.postBooking({ lessonId: lesson.id })
-      window.location.assign(checkoutUrl)
+      const result = await studioApi.postBooking({ lessonId: lesson.id })
+      if (!result.ok) {
+        alert(result.error)
+        setIsProcessing(false)
+        return
+      }
+      window.location.assign(result.checkoutUrl)
     } catch (err) {
       console.error(err)
       alert(err instanceof Error ? err.message : 'Не вдалося записатись')
@@ -801,11 +806,15 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
   const handleBuyPlan = async (plan: SubscriptionPlan) => {
     if (!currentClient) return
     try {
-      const { checkoutUrl } = await studioApi.purchasePlanOnServer(plan.id)
-      window.location.assign(checkoutUrl)
+      const result = await studioApi.purchasePlanOnServer(plan.id)
+      if (!result.ok) {
+        alert(result.error)
+        return
+      }
+      window.location.assign(result.checkoutUrl)
     } catch (e) {
       console.error(e)
-      alert('Не вдалося розпочати оплату.')
+      alert(e instanceof Error ? e.message : 'Не вдалося розпочати оплату.')
     }
   }
 
@@ -1422,11 +1431,15 @@ function ClientDashboardPage({ currentClient, onClientLogout, plans, promoCodes,
 
   const handleBuyPlan = async (plan: SubscriptionPlan) => {
     try {
-      const { checkoutUrl } = await studioApi.purchasePlanOnServer(plan.id)
-      window.location.assign(checkoutUrl)
+      const result = await studioApi.purchasePlanOnServer(plan.id)
+      if (!result.ok) {
+        alert(result.error)
+        return
+      }
+      window.location.assign(result.checkoutUrl)
     } catch (e) {
       console.error(e)
-      alert('Не вдалося розпочати оплату.')
+      alert(e instanceof Error ? e.message : 'Не вдалося розпочати оплату.')
     }
   }
 
