@@ -220,15 +220,24 @@ export type LessonSignup = {
   name: string
   email: string
   phone: string
+  /** CONFIRMED = paid / subscription-redeemed. PENDING_PAYMENT = LiqPay checkout in progress, slot held. */
+  status: 'CONFIRMED' | 'PENDING_PAYMENT'
   created_at: string
   subscription_kind?: 'paid' | 'gift'
   subscription_id?: string
 }
 
-/** Admin-only. Returns every booking row on a lesson, including guest bookings (client_user_id=null). */
+/**
+ * Admin-only. Returns every booking row that currently holds a slot — both CONFIRMED and
+ * in-flight PENDING_PAYMENT bookings. Without including PENDING ones, the admin's signups
+ * list would silently diverge from the lesson's `booked_count` (which counts held slots).
+ */
 export async function listLessonSignups(lessonId: string): Promise<LessonSignup[]> {
   const rows = await prisma.publicLessonBooking.findMany({
-    where: { lesson_id: String(lessonId), status: 'CONFIRMED' },
+    where: {
+      lesson_id: String(lessonId),
+      status: { in: ['CONFIRMED', 'PENDING_PAYMENT'] },
+    },
     orderBy: { created_at: 'asc' },
   })
   const userIds = Array.from(new Set(rows.map(r => r.client_user_id).filter((v): v is string => !!v)))
@@ -248,6 +257,7 @@ export async function listLessonSignups(lessonId: string): Promise<LessonSignup[
       name: sc?.name || r.client_name,
       email: sc?.email || r.client_email,
       phone: sc?.phone || '',
+      status: (r.status === 'PENDING_PAYMENT' ? 'PENDING_PAYMENT' : 'CONFIRMED') as 'CONFIRMED' | 'PENDING_PAYMENT',
       created_at: r.created_at.toISOString(),
       subscription_kind: meta.subscription_kind,
       subscription_id: meta.subscription_id,
@@ -345,7 +355,7 @@ export async function createLesson(data: {
       capacity: Number(data.capacity) || 10,
       booked_count: 0,
       status: data.status || 'SCHEDULED',
-      single_visit_price: Math.max(0, Math.round(Number(data.single_visit_price ?? 200))),
+      single_visit_price: Math.max(0, Math.round(Number(data.single_visit_price ?? 300))),
     },
   })
 }
@@ -488,11 +498,11 @@ export async function createSingleVisitPayment(args: {
     }
     const lesson = await tx.publicLesson.findUnique({ where: { id: args.lessonId } })
     if (!lesson) throw new Error('Lesson not found')
-    // Mirrors the cancel lockout: don't open new paid bookings inside the 2-hour window,
+    // Mirrors the cancel lockout: don't open new paid bookings inside the 1-hour window,
     // because the user might not finish payment in time and the auto-cancel cron may
     // cancel the lesson out from under them.
     if (lesson.start_timestamp.getTime() - Date.now() < CANCEL_LOCKOUT_MS) {
-      throw new Error('Запис недоступний менш ніж за 2 години до початку')
+      throw new Error('Запис недоступний менш ніж за 1 годину до початку')
     }
     const amount = Math.max(0, Math.round(lesson.single_visit_price))
     if (amount <= 0) throw new Error('Lesson is misconfigured: missing single_visit_price')
@@ -931,15 +941,15 @@ export type CancelledBooking = {
   name: string
 }
 
-/** Thrown when a user/token cancel is attempted within the 2-hour pre-lesson lockout. */
+/** Thrown when a user/token cancel is attempted within the 1-hour pre-lesson lockout. */
 export class CancelTooLateError extends Error {
   constructor() {
-    super('Скасування неможливе менш ніж за 2 години до початку заняття.')
+    super('Скасування неможливе менш ніж за 1 годину до початку заняття.')
     this.name = 'CancelTooLateError'
   }
 }
 
-const CANCEL_LOCKOUT_MS = 2 * 60 * 60 * 1000
+const CANCEL_LOCKOUT_MS = 1 * 60 * 60 * 1000
 
 async function cancelBookingByIdInTx(
   tx: Prisma.TransactionClient,
@@ -1015,7 +1025,7 @@ export async function cancelOwnedBookingRow(
   })
 }
 
-export async function autoCancelLowAttendanceLessons(windowHours = 2) {
+export async function autoCancelLowAttendanceLessons(windowHours = 1) {
   const now = new Date()
   const cutoff = new Date(now.getTime() + windowHours * 60 * 60 * 1000)
   const candidates = await prisma.publicLesson.findMany({

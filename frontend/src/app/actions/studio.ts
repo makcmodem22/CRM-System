@@ -107,29 +107,49 @@ export async function upsertStudioClientAction(body: { name: string; phone: stri
   return { ok: true as const }
 }
 
+export type CheckoutResult =
+  | { ok: true; orderId: string; checkoutUrl: string }
+  | { ok: false; error: string }
+
+/** True iff both LiqPay keys are configured; without them no checkout URL can be signed. */
+function isLiqpayConfigured(): boolean {
+  return !!process.env.LIQPAY_PUBLIC_KEY && !!process.env.LIQPAY_PRIVATE_KEY
+}
+
 /**
  * Begin a plan-purchase checkout. The caller supplies only `planId`; everything else (price,
  * sessions, expiry, plan name) is snapshotted server-side from `studio_config.plans_json` so a
  * hostile client cannot forge what they're paying for. Returns the LiqPay-hosted checkout URL.
  */
-export async function purchasePlanAction(body: { planId: string }) {
+export async function purchasePlanAction(body: { planId: string }): Promise<CheckoutResult> {
   const user = await requireUser()
   await rateLimitByIp('purchase', 20, 60_000)
-  const sc = await ensureStudioClientForUser(user)
-  const payment = await createPlanPurchasePayment({
-    planId: body.planId,
-    userId: user.id,
-    email: sc.email,
-  })
-  const site = publicSiteUrl()
-  const checkoutUrl = buildCheckoutUrl({
-    orderId: payment.orderId,
-    amount: payment.amount,
-    description: `Купівля абонементу · ${BUSINESS_NAME}`,
-    serverUrl: `${site}/api/liqpay/callback`,
-    resultUrl: `${site}/payment/result?orderId=${encodeURIComponent(payment.orderId)}`,
-  })
-  return { ok: true as const, orderId: payment.orderId, checkoutUrl }
+  if (!isLiqpayConfigured()) {
+    console.error('purchasePlanAction: LIQPAY keys not set in environment')
+    return { ok: false, error: 'Платіжна система тимчасово недоступна. Зверніться до адміністратора.' }
+  }
+  try {
+    const sc = await ensureStudioClientForUser(user)
+    const payment = await createPlanPurchasePayment({
+      planId: body.planId,
+      userId: user.id,
+      email: sc.email,
+    })
+    const site = publicSiteUrl()
+    const checkoutUrl = buildCheckoutUrl({
+      orderId: payment.orderId,
+      amount: payment.amount,
+      description: `Купівля абонементу · ${BUSINESS_NAME}`,
+      serverUrl: `${site}/api/liqpay/callback`,
+      resultUrl: `${site}/payment/result?orderId=${encodeURIComponent(payment.orderId)}`,
+    })
+    return { ok: true, orderId: payment.orderId, checkoutUrl }
+  } catch (err) {
+    // Log the full stack server-side so `vercel logs` shows the digest + original message.
+    // Surface a clean message to the client (Next.js would otherwise redact it in prod).
+    console.error('purchasePlanAction failed', { userId: user.id, planId: body.planId, err })
+    return { ok: false, error: errorToMessage(err, 'Не вдалося розпочати оплату абонементу.') }
+  }
 }
 
 /**
@@ -137,25 +157,44 @@ export async function purchasePlanAction(body: { planId: string }) {
  * email/name/user_id are ignored. The booking is created in PENDING_PAYMENT state so the slot
  * is held during checkout; if the user abandons, a sweeper releases it.
  */
-export async function postBookingAction(body: { lessonId: string }) {
+export async function postBookingAction(body: { lessonId: string }): Promise<CheckoutResult> {
   const user = await requireUser()
   await rateLimitByIp('book', 10, 60_000)
-  const sc = await ensureStudioClientForUser(user)
-  const payment = await createSingleVisitPayment({
-    lessonId: body.lessonId,
-    userId: user.id,
-    email: sc.email,
-    name: sc.name || 'Гість',
-  })
-  const site = publicSiteUrl()
-  const checkoutUrl = buildCheckoutUrl({
-    orderId: payment.orderId,
-    amount: payment.amount,
-    description: `Запис на заняття · ${BUSINESS_NAME}`,
-    serverUrl: `${site}/api/liqpay/callback`,
-    resultUrl: `${site}/payment/result?orderId=${encodeURIComponent(payment.orderId)}`,
-  })
-  return { ok: true as const, orderId: payment.orderId, checkoutUrl }
+  if (!isLiqpayConfigured()) {
+    console.error('postBookingAction: LIQPAY keys not set in environment')
+    return { ok: false, error: 'Платіжна система тимчасово недоступна. Зверніться до адміністратора.' }
+  }
+  try {
+    const sc = await ensureStudioClientForUser(user)
+    const payment = await createSingleVisitPayment({
+      lessonId: body.lessonId,
+      userId: user.id,
+      email: sc.email,
+      name: sc.name || 'Гість',
+    })
+    const site = publicSiteUrl()
+    const checkoutUrl = buildCheckoutUrl({
+      orderId: payment.orderId,
+      amount: payment.amount,
+      description: `Запис на заняття · ${BUSINESS_NAME}`,
+      serverUrl: `${site}/api/liqpay/callback`,
+      resultUrl: `${site}/payment/result?orderId=${encodeURIComponent(payment.orderId)}`,
+    })
+    return { ok: true, orderId: payment.orderId, checkoutUrl }
+  } catch (err) {
+    console.error('postBookingAction failed', { userId: user.id, lessonId: body.lessonId, err })
+    return { ok: false, error: errorToMessage(err, 'Не вдалося розпочати запис.') }
+  }
+}
+
+function errorToMessage(err: unknown, fallback: string): string {
+  if (!(err instanceof Error)) return fallback
+  const msg = err.message || ''
+  // Prisma "table does not exist" — likely the booking-status migration was not applied.
+  if (/does not exist/i.test(msg) && /studio_payment|public_lesson_booking/i.test(msg)) {
+    return 'База даних не оновлена для платежів. Зверніться до адміністратора.'
+  }
+  return msg || fallback
 }
 
 /** Frontend polls this on the /payment/result page to know whether the callback has fired. */
@@ -208,7 +247,7 @@ export async function cancelBookingAction(args: {
   if (args.token) {
     const verified = verifyBookingCancelToken(args.token, args.lessonId)
     if (!verified) throw new Error('Invalid or expired cancel link')
-    // `cancelBookingByIdRow` enforces the 2-hour lockout inside its transaction.
+    // `cancelBookingByIdRow` enforces the 1-hour lockout inside its transaction.
     cancelled = await cancelBookingByIdRow(verified.bookingId)
   } else {
     const user = await requireUser()

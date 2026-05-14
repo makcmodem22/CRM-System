@@ -106,7 +106,7 @@ model PublicLesson {
   capacity           Int
   booked_count       Int                   @default(0)
   status             String                @default("SCHEDULED")
-  single_visit_price Int                   @default(200)
+  single_visit_price Int                   @default(300)
   bookings           PublicLessonBooking[]
 
   @@index([start_timestamp])

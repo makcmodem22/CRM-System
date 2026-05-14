@@ -439,7 +439,7 @@ function ClientPage({ lessons, currentClient, onClientLogout, reloadAppData }: {
 
   const openCancelDialog = (lesson: ActualLesson) => {
     const hoursLeft = (lesson.start_timestamp.getTime() - Date.now()) / (1000 * 60 * 60)
-    setCancelBlocked(hoursLeft < 2)
+    setCancelBlocked(hoursLeft < 1)
     setCancelLesson(lesson)
   }
 
@@ -688,9 +688,9 @@ function ClientPage({ lessons, currentClient, onClientLogout, reloadAppData }: {
           </DialogHeader>
           <div className="py-2">
              {cancelBlocked ? (
-               <p className="text-sm text-red-200 bg-red-950/40 p-4 rounded-xl border border-red-500/25">Скасування неможливе — до початку заняття залишилось менше 2 годин.</p>
+               <p className="text-sm text-red-200 bg-red-950/40 p-4 rounded-xl border border-red-500/25">Скасування неможливе — до початку заняття залишилось менше 1 години.</p>
              ) : (
-               <p className="text-sm text-amber-100 bg-amber-950/35 p-4 rounded-xl border border-amber-500/25">Більше ніж 2 години. Буде ініційовано повернення коштів (Refund).</p>
+               <p className="text-sm text-amber-100 bg-amber-950/35 p-4 rounded-xl border border-amber-500/25">Залишилось більше години. Буде ініційовано повернення коштів (Refund).</p>
              )}
           </div>
           <DialogFooter>
@@ -743,8 +743,13 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
     setIsProcessing(true)
     try {
       await studioApi.upsertStudioClient({ name: name || currentClient.name, phone: phone || currentClient.phone || '' })
-      const { checkoutUrl } = await studioApi.postBooking({ lessonId: lesson.id })
-      window.location.assign(checkoutUrl)
+      const result = await studioApi.postBooking({ lessonId: lesson.id })
+      if (!result.ok) {
+        alert(result.error)
+        setIsProcessing(false)
+        return
+      }
+      window.location.assign(result.checkoutUrl)
     } catch (err) {
       console.error(err)
       alert(err instanceof Error ? err.message : 'Не вдалося записатись')
@@ -801,11 +806,15 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
   const handleBuyPlan = async (plan: SubscriptionPlan) => {
     if (!currentClient) return
     try {
-      const { checkoutUrl } = await studioApi.purchasePlanOnServer(plan.id)
-      window.location.assign(checkoutUrl)
+      const result = await studioApi.purchasePlanOnServer(plan.id)
+      if (!result.ok) {
+        alert(result.error)
+        return
+      }
+      window.location.assign(result.checkoutUrl)
     } catch (e) {
       console.error(e)
-      alert('Не вдалося розпочати оплату.')
+      alert(e instanceof Error ? e.message : 'Не вдалося розпочати оплату.')
     }
   }
 
@@ -831,9 +840,7 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
                 )}
                 {!successBookingUsedSubscription && (
                   <p className="text-sm text-muted-foreground mt-2">
-                    {currentClient && activeSub
-                      ? `Оплачено разовий візит (${SINGLE_VISIT_PRICE}₴).`
-                      : `Оплачено разовий візит (${SINGLE_VISIT_PRICE}₴).`}
+                    Оплачено разовий візит ({lesson.single_visit_price}₴).
                   </p>
                 )}
               </div>
@@ -901,7 +908,7 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
                       <p className="text-sm text-muted-foreground mt-1">{currentClient ? 'Заповніть форму та підтвердіть запис.' : 'Потрібна авторизація'}</p>
                     </div>
                     <div className="flex items-baseline gap-1">
-                      <span className="text-2xl font-black text-foreground">{SINGLE_VISIT_PRICE}</span>
+                      <span className="text-2xl font-black text-foreground">{lesson.single_visit_price}</span>
                       <span className="text-sm text-muted-foreground">₴</span>
                     </div>
                     <div className="flex items-center gap-1 text-sm text-muted-foreground/90 group-hover:text-muted-foreground transition-colors">
@@ -962,7 +969,7 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
                 <Button variant="ghost" className="w-fit p-0 h-auto mb-2 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => setStep('choose')}>← Назад до вибору</Button>
                 <CardTitle className="text-xl font-bold flex items-center gap-2">
                   <Ticket className="w-5 h-5 text-muted-foreground/90" />
-                  Одноразовий візит — {SINGLE_VISIT_PRICE}₴
+                  Одноразовий візит — {lesson.single_visit_price}₴
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-6">
@@ -985,7 +992,7 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
                     <input required type="email" placeholder="ivan@example.com" value={email} onChange={e=>setEmail(e.target.value)} className={cn(inputClasses, currentClient ? 'bg-muted/70 text-muted-foreground' : '')} readOnly={!!currentClient} />
                   </div>
                   <Button type="submit" disabled={isProcessing} className="w-full h-11 mt-4 text-base">
-                    {isProcessing ? 'Обробка...' : `Сплатити ${SINGLE_VISIT_PRICE}₴ та записатись`}
+                    {isProcessing ? 'Обробка...' : `Сплатити ${lesson.single_visit_price}₴ та записатись`}
                   </Button>
                 </form>
               </CardContent>
@@ -1169,7 +1176,7 @@ function CancelBookingPage({ reloadAppData }: { reloadAppData: () => Promise<voi
   }
 
   const hoursLeft = lesson ? (lesson.start_timestamp.getTime() - Date.now()) / (1000 * 60 * 60) : Infinity
-  const cancelBlocked = hoursLeft < 2
+  const cancelBlocked = hoursLeft < 1
 
   const handleCancelClick = async () => {
     if (!lesson?.my_booking_email || cancelBlocked) return
@@ -1217,7 +1224,7 @@ function CancelBookingPage({ reloadAppData }: { reloadAppData: () => Promise<voi
             </div>
             {cancelBlocked && (
               <p className="text-sm text-red-200 bg-red-950/40 p-4 rounded-xl border border-red-500/25 mb-4">
-                Скасування неможливе — до початку заняття залишилось менше 2 годин.
+                Скасування неможливе — до початку заняття залишилось менше 1 години.
               </p>
             )}
             <Button variant="destructive" className="w-full h-11 text-base font-semibold" disabled={isProcessing || cancelBlocked} onClick={handleCancelClick}>
@@ -1422,11 +1429,15 @@ function ClientDashboardPage({ currentClient, onClientLogout, plans, promoCodes,
 
   const handleBuyPlan = async (plan: SubscriptionPlan) => {
     try {
-      const { checkoutUrl } = await studioApi.purchasePlanOnServer(plan.id)
-      window.location.assign(checkoutUrl)
+      const result = await studioApi.purchasePlanOnServer(plan.id)
+      if (!result.ok) {
+        alert(result.error)
+        return
+      }
+      window.location.assign(result.checkoutUrl)
     } catch (e) {
       console.error(e)
-      alert('Не вдалося розпочати оплату.')
+      alert(e instanceof Error ? e.message : 'Не вдалося розпочати оплату.')
     }
   }
 
@@ -1733,13 +1744,13 @@ function PublicOfferPage() {
 
           <section className="space-y-3">
             <h2 className="text-lg font-bold">5. Скасування запису та повернення коштів</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">5.1. Клієнт має право скасувати запис на заняття не пізніше ніж за 2 (дві) години до його початку.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">5.1. Клієнт має право скасувати запис на заняття не пізніше ніж за 1 (одну) годину до його початку.</p>
             <p className="text-sm text-muted-foreground leading-relaxed">5.2. У разі своєчасного скасування:</p>
             <ul className="text-sm text-muted-foreground leading-relaxed list-disc pl-6 space-y-1">
               <li>якщо заняття було оплачено окремою оплатою — кошти повертаються у повному обсязі на платіжний інструмент, з якого було здійснено оплату, упродовж до 7 (семи) банківських днів;</li>
               <li>якщо заняття було оплачено з абонементу — відвідування повертається на абонемент і доступне для повторного використання у межах строку дії абонементу.</li>
             </ul>
-            <p className="text-sm text-muted-foreground leading-relaxed">5.3. У разі скасування пізніше ніж за 2 години до початку заняття, або у разі неявки без скасування, кошти за разове відвідування не повертаються, а відвідування з абонементу не повертається.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">5.3. У разі скасування пізніше ніж за 1 годину до початку заняття, або у разі неявки без скасування, кошти за разове відвідування не повертаються, а відвідування з абонементу не повертається.</p>
             <p className="text-sm text-muted-foreground leading-relaxed">5.4. Якщо заняття не відбулося з вини Виконавця (зокрема через недостатню кількість учасників), відвідування автоматично повертається на абонемент, а кошти за разове відвідування повертаються Клієнту у повному обсязі. Клієнт отримає лист-повідомлення на електронну пошту.</p>
             <p className="text-sm text-muted-foreground leading-relaxed">5.5. Активований абонемент після часткового використання поверненню не підлягає.</p>
           </section>
@@ -1799,7 +1810,7 @@ function RefundsPage() {
 
           <section className="space-y-3">
             <h2 className="text-lg font-bold">1. Скасування запису на заняття</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">Ви можете скасувати запис на заняття не пізніше ніж <strong className="text-foreground">за 2 (дві) години до його початку</strong>.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">Ви можете скасувати запис на заняття не пізніше ніж <strong className="text-foreground">за 1 (одну) годину до його початку</strong>.</p>
             <p className="text-sm text-muted-foreground leading-relaxed">Скасувати запис можна у двох способах:</p>
             <ul className="text-sm text-muted-foreground leading-relaxed list-disc pl-6 space-y-1">
               <li>в особистому кабінеті на сайті — кнопка «Скасувати» біля відповідного запису;</li>
@@ -1822,7 +1833,7 @@ function RefundsPage() {
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-bold">3. Якщо скасування відбулося пізніше ніж за 2 години</h2>
+            <h2 className="text-lg font-bold">3. Якщо скасування відбулося пізніше ніж за 1 годину</h2>
             <p className="text-sm text-muted-foreground leading-relaxed">У такому випадку:</p>
             <ul className="text-sm text-muted-foreground leading-relaxed list-disc pl-6 space-y-1">
               <li>кошти за разове відвідування не повертаються;</li>
@@ -2299,6 +2310,10 @@ function findClientForSignup(signup: studioApi.LessonSignup, clients: Client[]):
   }
   const emailLower = signup.email.trim().toLowerCase()
   return clients.find(c => c.email.trim().toLowerCase() === emailLower) || null
+}
+
+function pendingHintShown(signups: studioApi.LessonSignup[]): boolean {
+  return signups.some(s => s.status === 'PENDING_PAYMENT')
 }
 
 // ── Page: Admin Clients (List + Detail) ─────────────────────────────────────
@@ -3069,8 +3084,10 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
       stats.giftCertificateBookings += giftSubThisLesson
 
       // Revenue calculation
-      // Single visit: 300₴ total, 50% each
-      const singleRevenue = singleBookingsThisLesson * SINGLE_VISIT_PRICE
+      // Single visit: use this lesson's own price (fallback to default constant for any
+      // legacy rows missing the column). 50/50 split between admin and trainer.
+      const singleVisitPriceForLesson = lesson.single_visit_price ?? SINGLE_VISIT_PRICE
+      const singleRevenue = singleBookingsThisLesson * singleVisitPriceForLesson
       const singleTrainerShare = singleRevenue * 0.5
       const singleAdminShare = singleRevenue * 0.5
 
@@ -3277,7 +3294,7 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
             </div>
             <div className="text-sm text-muted-foreground space-y-1">
               <p className="font-semibold text-foreground">Формула розрахунку зарплати:</p>
-              <p>• <b>Разове заняття ({SINGLE_VISIT_PRICE}₴):</b> 50% адмін ({SINGLE_VISIT_PRICE/2}₴) + 50% тренер ({SINGLE_VISIT_PRICE/2}₴)</p>
+              <p>• <b>Разове заняття:</b> 50% адмін + 50% тренер (від ціни конкретного заняття)</p>
               <p>• <b>Абонемент (куплений або сертифікат):</b> (ціна пакету ÷ кількість візитів) ÷ 2 — тренеру та адміну (по 50%) з кожного проведеного заняття; подарункові візити не додають виручку адміну в цій моделі</p>
             </div>
           </div>
@@ -3488,14 +3505,14 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
   const [newLessonTrainer, setNewLessonTrainer] = useState(trainers[0] || 'Тренер')
   const [newLessonTime, setNewLessonTime] = useState('18:00')
   const [newLessonDuration, setNewLessonDuration] = useState('80')
-  const [newLessonPrice, setNewLessonPrice] = useState('200')
+  const [newLessonPrice, setNewLessonPrice] = useState('300')
 
   const [editingLesson, setEditingLesson] = useState<ActualLesson | null>(null)
   const [editLessonName, setEditLessonName] = useState('')
   const [editLessonTrainer, setEditLessonTrainer] = useState('')
   const [editLessonTime, setEditLessonTime] = useState('')
   const [editLessonDuration, setEditLessonDuration] = useState('80')
-  const [editLessonPrice, setEditLessonPrice] = useState('200')
+  const [editLessonPrice, setEditLessonPrice] = useState('300')
 
   const actDate = selectedDate || new Date()
   const weekStart = startOfWeek(actDate, { weekStartsOn: 1 })
@@ -3524,7 +3541,7 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
     }
     setLessons(prev => [...prev, optimistic])
     setIsAddLessonOpen(false)
-    setNewLessonPrice('200')
+    setNewLessonPrice('300')
     setNewLessonDuration('80')
     void (async () => {
       try {
@@ -3557,7 +3574,7 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
       Math.round((l.end_timestamp.getTime() - l.start_timestamp.getTime()) / 60_000),
     )
     setEditLessonDuration(String(minutes))
-    setEditLessonPrice(String(l.single_visit_price ?? 200))
+    setEditLessonPrice(String(l.single_visit_price ?? 300))
   }
 
   const handleEditLesson = (e: React.FormEvent) => {
@@ -3913,11 +3930,34 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
             <p className="text-sm text-muted-foreground py-6 text-center">Поки немає записаних</p>
           ) : (
             <div className="space-y-1.5">
-              <p className="text-xs text-muted-foreground mb-2">{signups.length} {signups.length === 1 ? 'запис' : 'записів'}</p>
+              {(() => {
+                const confirmedCount = signups.filter(s => s.status === 'CONFIRMED').length
+                const pendingCount = signups.length - confirmedCount
+                return (
+                  <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                    <span className="text-muted-foreground">
+                      Підтверджено: <span className="font-semibold text-foreground tabular-nums">{confirmedCount}</span>
+                    </span>
+                    {pendingCount > 0 && (
+                      <>
+                        <span className="text-muted-foreground/50">·</span>
+                        <span className="text-muted-foreground">
+                          Очікують оплати: <span className="font-semibold text-amber-300 tabular-nums">{pendingCount}</span>
+                        </span>
+                      </>
+                    )}
+                    <span className="text-muted-foreground/50">·</span>
+                    <span className="text-muted-foreground">
+                      Усього: <span className="font-semibold text-foreground tabular-nums">{signups.length}</span>
+                    </span>
+                  </div>
+                )
+              })()}
               {signups.map(s => {
                 const linkedClient = findClientForSignup(s, clients)
                 const kindLabel = s.subscription_kind === 'gift' ? 'Подарунок' : s.subscription_kind === 'paid' ? 'Абонемент' : 'Разово'
                 const kindColor = s.subscription_kind === 'gift' ? 'bg-purple-500/20 text-purple-200' : s.subscription_kind === 'paid' ? 'bg-brand-gold/20 text-brand-gold' : 'bg-white/10 text-muted-foreground'
+                const isPending = s.status === 'PENDING_PAYMENT'
                 return (
                   <button
                     key={s.bookingId}
@@ -3925,11 +3965,17 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
                     disabled={!linkedClient}
                     onClick={() => linkedClient && setDetailClient(linkedClient)}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-md border border-white/[0.06] bg-muted/25 text-left transition-colors",
-                      linkedClient ? "hover:bg-muted/50 hover:border-brand-gold/40 cursor-pointer" : "opacity-70 cursor-not-allowed"
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-md border text-left transition-colors",
+                      isPending
+                        ? "border-amber-500/30 bg-amber-950/15"
+                        : "border-white/[0.06] bg-muted/25",
+                      linkedClient ? "hover:bg-muted/50 hover:border-brand-gold/40 cursor-pointer" : "opacity-70 cursor-not-allowed",
                     )}
                   >
-                    <div className="w-9 h-9 rounded-full bg-brand-gold/15 text-brand-gold flex items-center justify-center font-bold text-sm ring-1 ring-brand-gold/25 shrink-0">
+                    <div className={cn(
+                      "w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm ring-1 shrink-0",
+                      isPending ? "bg-amber-500/15 text-amber-300 ring-amber-500/30" : "bg-brand-gold/15 text-brand-gold ring-brand-gold/25",
+                    )}>
                       {(s.name || s.email || '?').slice(0, 1).toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -3937,7 +3983,13 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
                       <p className="text-xs text-muted-foreground truncate">{s.email}{s.phone ? ` · ${s.phone}` : ''}</p>
                     </div>
                     <div className="flex flex-col items-end gap-1 shrink-0">
-                      <span className={cn("text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded", kindColor)}>{kindLabel}</span>
+                      {isPending ? (
+                        <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200">
+                          Очікує оплати
+                        </span>
+                      ) : (
+                        <span className={cn("text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded", kindColor)}>{kindLabel}</span>
+                      )}
                       {!s.client_user_id && !linkedClient && (
                         <span className="text-[9px] text-muted-foreground/70 uppercase">Гість</span>
                       )}
@@ -3945,6 +3997,11 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
                   </button>
                 )
               })}
+              {pendingHintShown(signups) && (
+                <p className="text-[11px] text-muted-foreground/80 mt-2 leading-snug">
+                  Слоти з позначкою «Очікує оплати» зарезервовані, поки клієнт у процесі оплати LiqPay. Якщо оплата не відбудеться протягом 60 хв, слот автоматично звільниться.
+                </p>
+              )}
             </div>
           )}
 

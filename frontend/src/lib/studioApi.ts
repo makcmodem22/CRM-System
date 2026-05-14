@@ -24,6 +24,7 @@ export type LessonSignup = {
   name: string
   email: string
   phone: string
+  status: 'CONFIRMED' | 'PENDING_PAYMENT'
   created_at: string
   subscription_kind?: 'paid' | 'gift'
   subscription_id?: string
@@ -100,7 +101,7 @@ export async function upsertStudioClient(body: { name: string; phone: string }) 
   return upsertStudioClientAction(body)
 }
 
-export async function purchasePlanOnServer(planId: string): Promise<{ ok: true; orderId: string; checkoutUrl: string }> {
+export async function purchasePlanOnServer(planId: string): Promise<CheckoutResult> {
   return purchasePlanAction({ planId })
 }
 
@@ -115,7 +116,11 @@ export async function fetchPaymentStatus(orderId: string): Promise<PaymentStatus
   return getPaymentStatusAction({ orderId })
 }
 
-export async function postBooking(body: { lessonId: string }): Promise<{ ok: true; orderId: string; checkoutUrl: string }> {
+export type CheckoutResult =
+  | { ok: true; orderId: string; checkoutUrl: string }
+  | { ok: false; error: string }
+
+export async function postBooking(body: { lessonId: string }): Promise<CheckoutResult> {
   return postBookingAction(body)
 }
 
