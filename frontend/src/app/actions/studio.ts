@@ -247,7 +247,7 @@ export async function cancelBookingAction(args: {
   if (args.token) {
     const verified = verifyBookingCancelToken(args.token, args.lessonId)
     if (!verified) throw new Error('Invalid or expired cancel link')
-    // `cancelBookingByIdRow` enforces the 2-hour lockout inside its transaction.
+    // `cancelBookingByIdRow` enforces the 1-hour lockout inside its transaction.
     cancelled = await cancelBookingByIdRow(verified.bookingId)
   } else {
     const user = await requireUser()

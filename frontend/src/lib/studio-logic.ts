@@ -498,11 +498,11 @@ export async function createSingleVisitPayment(args: {
     }
     const lesson = await tx.publicLesson.findUnique({ where: { id: args.lessonId } })
     if (!lesson) throw new Error('Lesson not found')
-    // Mirrors the cancel lockout: don't open new paid bookings inside the 2-hour window,
+    // Mirrors the cancel lockout: don't open new paid bookings inside the 1-hour window,
     // because the user might not finish payment in time and the auto-cancel cron may
     // cancel the lesson out from under them.
     if (lesson.start_timestamp.getTime() - Date.now() < CANCEL_LOCKOUT_MS) {
-      throw new Error('Запис недоступний менш ніж за 2 години до початку')
+      throw new Error('Запис недоступний менш ніж за 1 годину до початку')
     }
     const amount = Math.max(0, Math.round(lesson.single_visit_price))
     if (amount <= 0) throw new Error('Lesson is misconfigured: missing single_visit_price')
@@ -941,15 +941,15 @@ export type CancelledBooking = {
   name: string
 }
 
-/** Thrown when a user/token cancel is attempted within the 2-hour pre-lesson lockout. */
+/** Thrown when a user/token cancel is attempted within the 1-hour pre-lesson lockout. */
 export class CancelTooLateError extends Error {
   constructor() {
-    super('Скасування неможливе менш ніж за 2 години до початку заняття.')
+    super('Скасування неможливе менш ніж за 1 годину до початку заняття.')
     this.name = 'CancelTooLateError'
   }
 }
 
-const CANCEL_LOCKOUT_MS = 2 * 60 * 60 * 1000
+const CANCEL_LOCKOUT_MS = 1 * 60 * 60 * 1000
 
 async function cancelBookingByIdInTx(
   tx: Prisma.TransactionClient,
@@ -1025,7 +1025,7 @@ export async function cancelOwnedBookingRow(
   })
 }
 
-export async function autoCancelLowAttendanceLessons(windowHours = 2) {
+export async function autoCancelLowAttendanceLessons(windowHours = 1) {
   const now = new Date()
   const cutoff = new Date(now.getTime() + windowHours * 60 * 60 * 1000)
   const candidates = await prisma.publicLesson.findMany({

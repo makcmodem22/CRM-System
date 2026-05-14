@@ -439,7 +439,7 @@ function ClientPage({ lessons, currentClient, onClientLogout, reloadAppData }: {
 
   const openCancelDialog = (lesson: ActualLesson) => {
     const hoursLeft = (lesson.start_timestamp.getTime() - Date.now()) / (1000 * 60 * 60)
-    setCancelBlocked(hoursLeft < 2)
+    setCancelBlocked(hoursLeft < 1)
     setCancelLesson(lesson)
   }
 
@@ -688,9 +688,9 @@ function ClientPage({ lessons, currentClient, onClientLogout, reloadAppData }: {
           </DialogHeader>
           <div className="py-2">
              {cancelBlocked ? (
-               <p className="text-sm text-red-200 bg-red-950/40 p-4 rounded-xl border border-red-500/25">Скасування неможливе — до початку заняття залишилось менше 2 годин.</p>
+               <p className="text-sm text-red-200 bg-red-950/40 p-4 rounded-xl border border-red-500/25">Скасування неможливе — до початку заняття залишилось менше 1 години.</p>
              ) : (
-               <p className="text-sm text-amber-100 bg-amber-950/35 p-4 rounded-xl border border-amber-500/25">Більше ніж 2 години. Буде ініційовано повернення коштів (Refund).</p>
+               <p className="text-sm text-amber-100 bg-amber-950/35 p-4 rounded-xl border border-amber-500/25">Залишилось більше години. Буде ініційовано повернення коштів (Refund).</p>
              )}
           </div>
           <DialogFooter>
@@ -1176,7 +1176,7 @@ function CancelBookingPage({ reloadAppData }: { reloadAppData: () => Promise<voi
   }
 
   const hoursLeft = lesson ? (lesson.start_timestamp.getTime() - Date.now()) / (1000 * 60 * 60) : Infinity
-  const cancelBlocked = hoursLeft < 2
+  const cancelBlocked = hoursLeft < 1
 
   const handleCancelClick = async () => {
     if (!lesson?.my_booking_email || cancelBlocked) return
@@ -1224,7 +1224,7 @@ function CancelBookingPage({ reloadAppData }: { reloadAppData: () => Promise<voi
             </div>
             {cancelBlocked && (
               <p className="text-sm text-red-200 bg-red-950/40 p-4 rounded-xl border border-red-500/25 mb-4">
-                Скасування неможливе — до початку заняття залишилось менше 2 годин.
+                Скасування неможливе — до початку заняття залишилось менше 1 години.
               </p>
             )}
             <Button variant="destructive" className="w-full h-11 text-base font-semibold" disabled={isProcessing || cancelBlocked} onClick={handleCancelClick}>
@@ -1744,13 +1744,13 @@ function PublicOfferPage() {
 
           <section className="space-y-3">
             <h2 className="text-lg font-bold">5. Скасування запису та повернення коштів</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">5.1. Клієнт має право скасувати запис на заняття не пізніше ніж за 2 (дві) години до його початку.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">5.1. Клієнт має право скасувати запис на заняття не пізніше ніж за 1 (одну) годину до його початку.</p>
             <p className="text-sm text-muted-foreground leading-relaxed">5.2. У разі своєчасного скасування:</p>
             <ul className="text-sm text-muted-foreground leading-relaxed list-disc pl-6 space-y-1">
               <li>якщо заняття було оплачено окремою оплатою — кошти повертаються у повному обсязі на платіжний інструмент, з якого було здійснено оплату, упродовж до 7 (семи) банківських днів;</li>
               <li>якщо заняття було оплачено з абонементу — відвідування повертається на абонемент і доступне для повторного використання у межах строку дії абонементу.</li>
             </ul>
-            <p className="text-sm text-muted-foreground leading-relaxed">5.3. У разі скасування пізніше ніж за 2 години до початку заняття, або у разі неявки без скасування, кошти за разове відвідування не повертаються, а відвідування з абонементу не повертається.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">5.3. У разі скасування пізніше ніж за 1 годину до початку заняття, або у разі неявки без скасування, кошти за разове відвідування не повертаються, а відвідування з абонементу не повертається.</p>
             <p className="text-sm text-muted-foreground leading-relaxed">5.4. Якщо заняття не відбулося з вини Виконавця (зокрема через недостатню кількість учасників), відвідування автоматично повертається на абонемент, а кошти за разове відвідування повертаються Клієнту у повному обсязі. Клієнт отримає лист-повідомлення на електронну пошту.</p>
             <p className="text-sm text-muted-foreground leading-relaxed">5.5. Активований абонемент після часткового використання поверненню не підлягає.</p>
           </section>
@@ -1810,7 +1810,7 @@ function RefundsPage() {
 
           <section className="space-y-3">
             <h2 className="text-lg font-bold">1. Скасування запису на заняття</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">Ви можете скасувати запис на заняття не пізніше ніж <strong className="text-foreground">за 2 (дві) години до його початку</strong>.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">Ви можете скасувати запис на заняття не пізніше ніж <strong className="text-foreground">за 1 (одну) годину до його початку</strong>.</p>
             <p className="text-sm text-muted-foreground leading-relaxed">Скасувати запис можна у двох способах:</p>
             <ul className="text-sm text-muted-foreground leading-relaxed list-disc pl-6 space-y-1">
               <li>в особистому кабінеті на сайті — кнопка «Скасувати» біля відповідного запису;</li>
@@ -1833,7 +1833,7 @@ function RefundsPage() {
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-bold">3. Якщо скасування відбулося пізніше ніж за 2 години</h2>
+            <h2 className="text-lg font-bold">3. Якщо скасування відбулося пізніше ніж за 1 годину</h2>
             <p className="text-sm text-muted-foreground leading-relaxed">У такому випадку:</p>
             <ul className="text-sm text-muted-foreground leading-relaxed list-disc pl-6 space-y-1">
               <li>кошти за разове відвідування не повертаються;</li>

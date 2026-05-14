@@ -40,7 +40,7 @@ async function run(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   try {
-    const cancelled = await autoCancelLowAttendanceLessons(2)
+    const cancelled = await autoCancelLowAttendanceLessons(1)
     let emailsSent = 0
     for (const lesson of cancelled) {
       for (const recipient of lesson.notifyEmails) {
