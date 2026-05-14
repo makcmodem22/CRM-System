@@ -498,11 +498,11 @@ export async function createSingleVisitPayment(args: {
     }
     const lesson = await tx.publicLesson.findUnique({ where: { id: args.lessonId } })
     if (!lesson) throw new Error('Lesson not found')
-    // Mirrors the cancel lockout: don't open new paid bookings inside the 1-hour window,
-    // because the user might not finish payment in time and the auto-cancel cron may
-    // cancel the lesson out from under them.
-    if (lesson.start_timestamp.getTime() - Date.now() < CANCEL_LOCKOUT_MS) {
-      throw new Error('Запис недоступний менш ніж за 1 годину до початку')
+    // The booking is allowed up until the lesson actually starts. Cancellation has its own
+    // 1-hour lockout (see CANCEL_LOCKOUT_MS in cancelBookingByIdInTx) — that rule is about
+    // refunds, not about whether you can sign up.
+    if (lesson.start_timestamp.getTime() <= Date.now()) {
+      throw new Error('Заняття вже почалося')
     }
     const amount = Math.max(0, Math.round(lesson.single_visit_price))
     if (amount <= 0) throw new Error('Lesson is misconfigured: missing single_visit_price')
@@ -903,6 +903,9 @@ export async function postBookingWithSubscriptionRow(body: {
     }
     const lesson = await tx.publicLesson.findUnique({ where: { id: body.lessonId } })
     if (!lesson) throw new Error('Lesson not found')
+    if (lesson.start_timestamp.getTime() <= Date.now()) {
+      throw new Error('Заняття вже почалося')
+    }
 
     const meta = { ...(body.meta || {}), subscription_id: sub.id }
     const booking = await tx.publicLessonBooking.create({
