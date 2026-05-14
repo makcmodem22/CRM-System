@@ -355,7 +355,7 @@ export async function createLesson(data: {
       capacity: Number(data.capacity) || 10,
       booked_count: 0,
       status: data.status || 'SCHEDULED',
-      single_visit_price: Math.max(0, Math.round(Number(data.single_visit_price ?? 200))),
+      single_visit_price: Math.max(0, Math.round(Number(data.single_visit_price ?? 300))),
     },
   })
 }

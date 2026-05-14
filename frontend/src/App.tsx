@@ -840,9 +840,7 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
                 )}
                 {!successBookingUsedSubscription && (
                   <p className="text-sm text-muted-foreground mt-2">
-                    {currentClient && activeSub
-                      ? `Оплачено разовий візит (${SINGLE_VISIT_PRICE}₴).`
-                      : `Оплачено разовий візит (${SINGLE_VISIT_PRICE}₴).`}
+                    Оплачено разовий візит ({lesson.single_visit_price}₴).
                   </p>
                 )}
               </div>
@@ -910,7 +908,7 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
                       <p className="text-sm text-muted-foreground mt-1">{currentClient ? 'Заповніть форму та підтвердіть запис.' : 'Потрібна авторизація'}</p>
                     </div>
                     <div className="flex items-baseline gap-1">
-                      <span className="text-2xl font-black text-foreground">{SINGLE_VISIT_PRICE}</span>
+                      <span className="text-2xl font-black text-foreground">{lesson.single_visit_price}</span>
                       <span className="text-sm text-muted-foreground">₴</span>
                     </div>
                     <div className="flex items-center gap-1 text-sm text-muted-foreground/90 group-hover:text-muted-foreground transition-colors">
@@ -971,7 +969,7 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
                 <Button variant="ghost" className="w-fit p-0 h-auto mb-2 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => setStep('choose')}>← Назад до вибору</Button>
                 <CardTitle className="text-xl font-bold flex items-center gap-2">
                   <Ticket className="w-5 h-5 text-muted-foreground/90" />
-                  Одноразовий візит — {SINGLE_VISIT_PRICE}₴
+                  Одноразовий візит — {lesson.single_visit_price}₴
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-6">
@@ -994,7 +992,7 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
                     <input required type="email" placeholder="ivan@example.com" value={email} onChange={e=>setEmail(e.target.value)} className={cn(inputClasses, currentClient ? 'bg-muted/70 text-muted-foreground' : '')} readOnly={!!currentClient} />
                   </div>
                   <Button type="submit" disabled={isProcessing} className="w-full h-11 mt-4 text-base">
-                    {isProcessing ? 'Обробка...' : `Сплатити ${SINGLE_VISIT_PRICE}₴ та записатись`}
+                    {isProcessing ? 'Обробка...' : `Сплатити ${lesson.single_visit_price}₴ та записатись`}
                   </Button>
                 </form>
               </CardContent>
@@ -3086,8 +3084,10 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
       stats.giftCertificateBookings += giftSubThisLesson
 
       // Revenue calculation
-      // Single visit: 300₴ total, 50% each
-      const singleRevenue = singleBookingsThisLesson * SINGLE_VISIT_PRICE
+      // Single visit: use this lesson's own price (fallback to default constant for any
+      // legacy rows missing the column). 50/50 split between admin and trainer.
+      const singleVisitPriceForLesson = lesson.single_visit_price ?? SINGLE_VISIT_PRICE
+      const singleRevenue = singleBookingsThisLesson * singleVisitPriceForLesson
       const singleTrainerShare = singleRevenue * 0.5
       const singleAdminShare = singleRevenue * 0.5
 
@@ -3294,7 +3294,7 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
             </div>
             <div className="text-sm text-muted-foreground space-y-1">
               <p className="font-semibold text-foreground">Формула розрахунку зарплати:</p>
-              <p>• <b>Разове заняття ({SINGLE_VISIT_PRICE}₴):</b> 50% адмін ({SINGLE_VISIT_PRICE/2}₴) + 50% тренер ({SINGLE_VISIT_PRICE/2}₴)</p>
+              <p>• <b>Разове заняття:</b> 50% адмін + 50% тренер (від ціни конкретного заняття)</p>
               <p>• <b>Абонемент (куплений або сертифікат):</b> (ціна пакету ÷ кількість візитів) ÷ 2 — тренеру та адміну (по 50%) з кожного проведеного заняття; подарункові візити не додають виручку адміну в цій моделі</p>
             </div>
           </div>
@@ -3505,14 +3505,14 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
   const [newLessonTrainer, setNewLessonTrainer] = useState(trainers[0] || 'Тренер')
   const [newLessonTime, setNewLessonTime] = useState('18:00')
   const [newLessonDuration, setNewLessonDuration] = useState('80')
-  const [newLessonPrice, setNewLessonPrice] = useState('200')
+  const [newLessonPrice, setNewLessonPrice] = useState('300')
 
   const [editingLesson, setEditingLesson] = useState<ActualLesson | null>(null)
   const [editLessonName, setEditLessonName] = useState('')
   const [editLessonTrainer, setEditLessonTrainer] = useState('')
   const [editLessonTime, setEditLessonTime] = useState('')
   const [editLessonDuration, setEditLessonDuration] = useState('80')
-  const [editLessonPrice, setEditLessonPrice] = useState('200')
+  const [editLessonPrice, setEditLessonPrice] = useState('300')
 
   const actDate = selectedDate || new Date()
   const weekStart = startOfWeek(actDate, { weekStartsOn: 1 })
@@ -3541,7 +3541,7 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
     }
     setLessons(prev => [...prev, optimistic])
     setIsAddLessonOpen(false)
-    setNewLessonPrice('200')
+    setNewLessonPrice('300')
     setNewLessonDuration('80')
     void (async () => {
       try {
@@ -3574,7 +3574,7 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
       Math.round((l.end_timestamp.getTime() - l.start_timestamp.getTime()) / 60_000),
     )
     setEditLessonDuration(String(minutes))
-    setEditLessonPrice(String(l.single_visit_price ?? 200))
+    setEditLessonPrice(String(l.single_visit_price ?? 300))
   }
 
   const handleEditLesson = (e: React.FormEvent) => {
