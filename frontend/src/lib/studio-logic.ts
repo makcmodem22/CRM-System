@@ -220,15 +220,24 @@ export type LessonSignup = {
   name: string
   email: string
   phone: string
+  /** CONFIRMED = paid / subscription-redeemed. PENDING_PAYMENT = LiqPay checkout in progress, slot held. */
+  status: 'CONFIRMED' | 'PENDING_PAYMENT'
   created_at: string
   subscription_kind?: 'paid' | 'gift'
   subscription_id?: string
 }
 
-/** Admin-only. Returns every booking row on a lesson, including guest bookings (client_user_id=null). */
+/**
+ * Admin-only. Returns every booking row that currently holds a slot — both CONFIRMED and
+ * in-flight PENDING_PAYMENT bookings. Without including PENDING ones, the admin's signups
+ * list would silently diverge from the lesson's `booked_count` (which counts held slots).
+ */
 export async function listLessonSignups(lessonId: string): Promise<LessonSignup[]> {
   const rows = await prisma.publicLessonBooking.findMany({
-    where: { lesson_id: String(lessonId), status: 'CONFIRMED' },
+    where: {
+      lesson_id: String(lessonId),
+      status: { in: ['CONFIRMED', 'PENDING_PAYMENT'] },
+    },
     orderBy: { created_at: 'asc' },
   })
   const userIds = Array.from(new Set(rows.map(r => r.client_user_id).filter((v): v is string => !!v)))
@@ -248,6 +257,7 @@ export async function listLessonSignups(lessonId: string): Promise<LessonSignup[
       name: sc?.name || r.client_name,
       email: sc?.email || r.client_email,
       phone: sc?.phone || '',
+      status: (r.status === 'PENDING_PAYMENT' ? 'PENDING_PAYMENT' : 'CONFIRMED') as 'CONFIRMED' | 'PENDING_PAYMENT',
       created_at: r.created_at.toISOString(),
       subscription_kind: meta.subscription_kind,
       subscription_id: meta.subscription_id,

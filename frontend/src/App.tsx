@@ -2314,6 +2314,10 @@ function findClientForSignup(signup: studioApi.LessonSignup, clients: Client[]):
   return clients.find(c => c.email.trim().toLowerCase() === emailLower) || null
 }
 
+function pendingHintShown(signups: studioApi.LessonSignup[]): boolean {
+  return signups.some(s => s.status === 'PENDING_PAYMENT')
+}
+
 // ── Page: Admin Clients (List + Detail) ─────────────────────────────────────
 function AdminClientsPage({ clients, lessons }: { clients: Client[]; lessons: ActualLesson[] }) {
   const navigate = useNavigate()
@@ -3926,11 +3930,34 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
             <p className="text-sm text-muted-foreground py-6 text-center">Поки немає записаних</p>
           ) : (
             <div className="space-y-1.5">
-              <p className="text-xs text-muted-foreground mb-2">{signups.length} {signups.length === 1 ? 'запис' : 'записів'}</p>
+              {(() => {
+                const confirmedCount = signups.filter(s => s.status === 'CONFIRMED').length
+                const pendingCount = signups.length - confirmedCount
+                return (
+                  <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                    <span className="text-muted-foreground">
+                      Підтверджено: <span className="font-semibold text-foreground tabular-nums">{confirmedCount}</span>
+                    </span>
+                    {pendingCount > 0 && (
+                      <>
+                        <span className="text-muted-foreground/50">·</span>
+                        <span className="text-muted-foreground">
+                          Очікують оплати: <span className="font-semibold text-amber-300 tabular-nums">{pendingCount}</span>
+                        </span>
+                      </>
+                    )}
+                    <span className="text-muted-foreground/50">·</span>
+                    <span className="text-muted-foreground">
+                      Усього: <span className="font-semibold text-foreground tabular-nums">{signups.length}</span>
+                    </span>
+                  </div>
+                )
+              })()}
               {signups.map(s => {
                 const linkedClient = findClientForSignup(s, clients)
                 const kindLabel = s.subscription_kind === 'gift' ? 'Подарунок' : s.subscription_kind === 'paid' ? 'Абонемент' : 'Разово'
                 const kindColor = s.subscription_kind === 'gift' ? 'bg-purple-500/20 text-purple-200' : s.subscription_kind === 'paid' ? 'bg-brand-gold/20 text-brand-gold' : 'bg-white/10 text-muted-foreground'
+                const isPending = s.status === 'PENDING_PAYMENT'
                 return (
                   <button
                     key={s.bookingId}
@@ -3938,11 +3965,17 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
                     disabled={!linkedClient}
                     onClick={() => linkedClient && setDetailClient(linkedClient)}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-md border border-white/[0.06] bg-muted/25 text-left transition-colors",
-                      linkedClient ? "hover:bg-muted/50 hover:border-brand-gold/40 cursor-pointer" : "opacity-70 cursor-not-allowed"
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-md border text-left transition-colors",
+                      isPending
+                        ? "border-amber-500/30 bg-amber-950/15"
+                        : "border-white/[0.06] bg-muted/25",
+                      linkedClient ? "hover:bg-muted/50 hover:border-brand-gold/40 cursor-pointer" : "opacity-70 cursor-not-allowed",
                     )}
                   >
-                    <div className="w-9 h-9 rounded-full bg-brand-gold/15 text-brand-gold flex items-center justify-center font-bold text-sm ring-1 ring-brand-gold/25 shrink-0">
+                    <div className={cn(
+                      "w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm ring-1 shrink-0",
+                      isPending ? "bg-amber-500/15 text-amber-300 ring-amber-500/30" : "bg-brand-gold/15 text-brand-gold ring-brand-gold/25",
+                    )}>
                       {(s.name || s.email || '?').slice(0, 1).toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -3950,7 +3983,13 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
                       <p className="text-xs text-muted-foreground truncate">{s.email}{s.phone ? ` · ${s.phone}` : ''}</p>
                     </div>
                     <div className="flex flex-col items-end gap-1 shrink-0">
-                      <span className={cn("text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded", kindColor)}>{kindLabel}</span>
+                      {isPending ? (
+                        <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200">
+                          Очікує оплати
+                        </span>
+                      ) : (
+                        <span className={cn("text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded", kindColor)}>{kindLabel}</span>
+                      )}
                       {!s.client_user_id && !linkedClient && (
                         <span className="text-[9px] text-muted-foreground/70 uppercase">Гість</span>
                       )}
@@ -3958,6 +3997,11 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
                   </button>
                 )
               })}
+              {pendingHintShown(signups) && (
+                <p className="text-[11px] text-muted-foreground/80 mt-2 leading-snug">
+                  Слоти з позначкою «Очікує оплати» зарезервовані, поки клієнт у процесі оплати LiqPay. Якщо оплата не відбудеться протягом 60 хв, слот автоматично звільниться.
+                </p>
+              )}
             </div>
           )}
 

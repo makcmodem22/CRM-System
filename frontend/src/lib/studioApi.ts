@@ -24,6 +24,7 @@ export type LessonSignup = {
   name: string
   email: string
   phone: string
+  status: 'CONFIRMED' | 'PENDING_PAYMENT'
   created_at: string
   subscription_kind?: 'paid' | 'gift'
   subscription_id?: string
