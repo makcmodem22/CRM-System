@@ -278,8 +278,8 @@ export async function fetchLessonForCancelAction(args: { lessonId: string; token
 
 export async function redeemPromoAction(body: { code: string }) {
   const user = await requireUser()
-  await redeemPromoRow({ code: body.code, clientId: user.id, clientEmail: user.email })
-  return { ok: true as const }
+  const result = await redeemPromoRow({ code: body.code, clientId: user.id, clientEmail: user.email })
+  return { ok: true as const, planName: result.planName }
 }
 
 async function trySendBookingEmail(args: {
