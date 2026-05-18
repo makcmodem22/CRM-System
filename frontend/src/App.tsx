@@ -4121,7 +4121,19 @@ export default function App() {
     setCurrentClientId(null)
   }
 
-  if (studioLoadError && lessons.length === 0 && clients.length === 0) {
+  // Routes that don't depend on the studio bootstrap (lessons/clients/plans). If the bootstrap
+  // fetch fails or is in-flight, these pages must still render — otherwise the error UI would
+  // replace the entire app while the user is typing in the auth form, unmounting AuthPage and
+  // wiping the form state on every recovery.
+  const pathname = typeof window !== 'undefined' ? window.location.pathname : '/'
+  const isStandaloneRoute =
+    pathname === '/auth' ||
+    pathname.startsWith('/offer') ||
+    pathname.startsWith('/refunds') ||
+    pathname.startsWith('/cancel') ||
+    pathname.startsWith('/payment/')
+
+  if (!isStandaloneRoute && studioLoadError && lessons.length === 0 && clients.length === 0) {
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 text-center gap-4">
         <AlertTriangle className="w-12 h-12 text-amber-500" />
