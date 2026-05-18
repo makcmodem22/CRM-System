@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { LIQPAY_FAILED_STATUSES, LIQPAY_PAID_STATUSES, parseCallback } from '@/lib/liqpay'
+import { LIQPAY_FAILED_STATUSES, LIQPAY_PAID_STATUSES, isLiqpaySandboxMode, parseCallback } from '@/lib/liqpay'
 import { handleLiqpayPaidPayment, handleLiqpayFailedPayment } from '@/lib/studio-logic'
 import { signBookingCancelToken } from '@/lib/admin-crypto'
 import { sendBookingConfirmationEmail } from '@/lib/mailer'
@@ -55,6 +55,15 @@ export async function POST(req: Request) {
 
   const liqpayStatus = String(payload.status || '')
   const liqpayPaymentId = payload.payment_id != null ? String(payload.payment_id) : null
+
+  // Defense-in-depth against the "sandbox left on in prod" misconfig: a sandbox-status
+  // callback should only ever arrive when LIQPAY_SANDBOX=1. If sandbox is off but we
+  // still got status='sandbox', refuse to confirm — otherwise real users would get free
+  // bookings/subscriptions without any card actually being charged.
+  if (liqpayStatus === 'sandbox' && !isLiqpaySandboxMode()) {
+    console.error('LiqPay callback: sandbox status received but sandbox mode disabled', { orderId })
+    return NextResponse.json({ ok: false, error: 'sandbox_status_in_production' }, { status: 200 })
+  }
 
   if (LIQPAY_PAID_STATUSES.has(liqpayStatus)) {
     if (payment.status === 'SUCCESS') return NextResponse.json({ ok: true, idempotent: true })

@@ -19,6 +19,10 @@ function sandboxFlag(): 0 | 1 {
   return process.env.LIQPAY_SANDBOX === '1' ? 1 : 0
 }
 
+export function isLiqpaySandboxMode(): boolean {
+  return sandboxFlag() === 1
+}
+
 function sign(privateKeyValue: string, dataB64: string): string {
   return createHash('sha1').update(privateKeyValue + dataB64 + privateKeyValue).digest('base64')
 }
