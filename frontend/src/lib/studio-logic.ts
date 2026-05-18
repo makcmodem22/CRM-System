@@ -1124,9 +1124,9 @@ export async function getLessonForCancelByToken(bookingId: string) {
  * Atomic promo redemption. Locks studio_config row 1 with FOR UPDATE so two
  * concurrent redemptions of the same code can't both pass the used-check.
  */
-export async function redeemPromoRow(body: { code: string; clientId: string; clientEmail: string }) {
+export async function redeemPromoRow(body: { code: string; clientId: string; clientEmail: string }): Promise<{ planName: string }> {
   const upper = body.code.trim().toUpperCase()
-  await prisma.$transaction(async tx => {
+  return prisma.$transaction(async tx => {
     await tx.$queryRaw`SELECT 1 FROM studio_config WHERE id = 1 FOR UPDATE`
     const cfg = await tx.studioConfig.findUnique({ where: { id: 1 } })
     if (!cfg) throw new Error('Studio config missing')
@@ -1176,5 +1176,7 @@ export async function redeemPromoRow(body: { code: string; clientId: string; cli
       where: { id: 1 },
       data: { promo_codes_json: nextPromos as Prisma.InputJsonValue },
     })
+
+    return { planName: promo.plan_name }
   })
 }

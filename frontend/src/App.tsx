@@ -1398,11 +1398,10 @@ function AuthPage({ setCurrentClientId, reloadAppData }: {
 }
 
 // ── Page: Client Dashboard ──────────────────────────────────────────────────
-function ClientDashboardPage({ currentClient, onClientLogout, plans, promoCodes, reloadAppData }: {
+function ClientDashboardPage({ currentClient, onClientLogout, plans, reloadAppData }: {
   currentClient: Client | null,
   onClientLogout: () => void,
   plans: SubscriptionPlan[],
-  promoCodes: PromoCode[],
   reloadAppData: () => Promise<void>,
 }) {
   const navigate = useNavigate()
@@ -1446,16 +1445,18 @@ function ClientDashboardPage({ currentClient, onClientLogout, plans, promoCodes,
     setPromoSuccess(null)
     const code = promoInput.trim().toUpperCase()
     if (!code) return
-    const promo = promoCodes.find(p => p.code === code)
-    if (!promo) { setPromoError('Невірний код. Перевірте правильність.'); return }
-    if (promo.used) { setPromoError('Цей код вже використаний.'); return }
     try {
-      await studioApi.redeemPromoOnServer({ code })
+      // Server is the source of truth — `promoCodes` is empty for non-admin sessions
+      // (see studio-logic.ts:getBootstrapData), so we cannot pre-validate locally.
+      const result = await studioApi.redeemPromoOnServer({ code })
       await reloadAppData()
       setPromoInput('')
-      setPromoSuccess(`Абонемент "${promo.plan_name}" успішно активовано!`)
+      setPromoSuccess(`Абонемент "${result.planName}" успішно активовано!`)
     } catch (e) {
-      setPromoError(e instanceof Error ? e.message : 'Помилка активації')
+      const msg = e instanceof Error ? e.message : 'Помилка активації'
+      if (/invalid code/i.test(msg)) setPromoError('Невірний код. Перевірте правильність.')
+      else if (/already used/i.test(msg)) setPromoError('Цей код вже використаний.')
+      else setPromoError(msg)
     }
   }
 
@@ -4120,7 +4121,19 @@ export default function App() {
     setCurrentClientId(null)
   }
 
-  if (studioLoadError && lessons.length === 0 && clients.length === 0) {
+  // Routes that don't depend on the studio bootstrap (lessons/clients/plans). If the bootstrap
+  // fetch fails or is in-flight, these pages must still render — otherwise the error UI would
+  // replace the entire app while the user is typing in the auth form, unmounting AuthPage and
+  // wiping the form state on every recovery.
+  const pathname = typeof window !== 'undefined' ? window.location.pathname : '/'
+  const isStandaloneRoute =
+    pathname === '/auth' ||
+    pathname.startsWith('/offer') ||
+    pathname.startsWith('/refunds') ||
+    pathname.startsWith('/cancel') ||
+    pathname.startsWith('/payment/')
+
+  if (!isStandaloneRoute && studioLoadError && lessons.length === 0 && clients.length === 0) {
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 text-center gap-4">
         <AlertTriangle className="w-12 h-12 text-amber-500" />
@@ -4147,7 +4160,7 @@ export default function App() {
         <Route path="/book/:id" element={<BookingPage lessons={lessonsForViewer} currentClient={currentClient} plans={plans} onClientLogout={handleClientLogout} reloadAppData={reloadAppData} />} />
         <Route path="/cancel/:id" element={<CancelBookingPage reloadAppData={reloadAppData} />} />
         <Route path="/auth" element={<AuthPage setCurrentClientId={setCurrentClientId} reloadAppData={reloadAppData} />} />
-        <Route path="/dashboard" element={<ClientDashboardPage currentClient={currentClient} onClientLogout={handleClientLogout} plans={plans} promoCodes={promoCodes} reloadAppData={reloadAppData} />} />
+        <Route path="/dashboard" element={<ClientDashboardPage currentClient={currentClient} onClientLogout={handleClientLogout} plans={plans} reloadAppData={reloadAppData} />} />
         <Route path="/offer" element={<PublicOfferPage />} />
         <Route path="/refunds" element={<RefundsPage />} />
         <Route path="/payment/result" element={<PaymentResultPage reloadAppData={reloadAppData} />} />
