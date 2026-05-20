@@ -24,6 +24,7 @@ import {
   cancelOwnedBookingRow,
   getLessonForCancelByToken,
   redeemPromoRow,
+  adminGrantCertificateToClient,
   ensureStudioClientForUser,
   listLessonSignups,
   type LessonSignup,
@@ -280,6 +281,25 @@ export async function redeemPromoAction(body: { code: string }) {
   const user = await requireUser()
   const result = await redeemPromoRow({ code: body.code, clientId: user.id, clientEmail: user.email })
   return { ok: true as const, planName: result.planName }
+}
+
+/**
+ * Admin-only: grant a gift subscription directly to a chosen client. The plan name,
+ * session count, and duration are snapshotted server-side from the studio config; the
+ * caller only supplies opaque IDs. Rate-limited per admin IP as a backstop against
+ * accidental loops or a leaked admin cookie.
+ */
+export async function adminGrantCertificateAction(body: { clientId: string; planId: string }) {
+  await assertAdmin()
+  await rateLimitByIp('admin-grant-cert', 30, 60_000)
+  if (typeof body?.clientId !== 'string' || typeof body?.planId !== 'string') {
+    throw new Error('clientId and planId are required')
+  }
+  const result = await adminGrantCertificateToClient({
+    clientId: body.clientId,
+    planId: body.planId,
+  })
+  return { ok: true as const, planName: result.planName, subscriptionId: result.subscriptionId }
 }
 
 async function trySendBookingEmail(args: {

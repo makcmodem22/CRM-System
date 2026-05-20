@@ -13,6 +13,7 @@ import {
   cancelBookingAction,
   fetchLessonForCancelAction,
   redeemPromoAction,
+  adminGrantCertificateAction,
   listLessonSignupsAction,
   getPaymentStatusAction,
 } from '@/app/actions/studio'
@@ -142,6 +143,10 @@ export async function fetchLessonForCancel(args: { lessonId: string; token: stri
 
 export async function redeemPromoOnServer(body: { code: string }) {
   return redeemPromoAction(body)
+}
+
+export async function adminGrantCertificateOnServer(body: { clientId: string; planId: string }) {
+  return adminGrantCertificateAction(body)
 }
 
 export async function fetchLessonSignups(lessonId: string): Promise<LessonSignup[]> {

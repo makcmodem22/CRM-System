@@ -24,6 +24,10 @@ export type ClientSub = {
   purchased_at: string
   expires_at: string
   source?: 'purchase' | 'promo'
+  /** Audit: true when an admin granted this subscription directly (no promo code). */
+  granted_by_admin?: boolean
+  /** Audit: ISO timestamp of the admin grant. */
+  granted_at?: string
 }
 
 type ClientBookingMeta = {
@@ -1178,5 +1182,60 @@ export async function redeemPromoRow(body: { code: string; clientId: string; cli
     })
 
     return { planName: promo.plan_name }
+  })
+}
+
+/**
+ * Admin-driven direct grant of a gift subscription. The plan is snapshotted from
+ * `studio_config.plans_json` under a row lock, so a hostile/stale client cannot
+ * forge plan name, sessions, price, or duration. The grant is appended atomically
+ * to the target client's `subscriptions_json` along with audit metadata.
+ *
+ * Caller is responsible for asserting admin auth before invoking this.
+ */
+export async function adminGrantCertificateToClient(body: {
+  clientId: string
+  planId: string
+}): Promise<{ planName: string; subscriptionId: string }> {
+  const clientId = String(body.clientId || '').trim()
+  const planId = String(body.planId || '').trim()
+  if (!clientId) throw new Error('Client is required')
+  if (!planId) throw new Error('Plan is required')
+  return prisma.$transaction(async tx => {
+    // Lock the config row so a concurrent plan edit can't change the snapshot
+    // after we read it but before we write the subscription.
+    await tx.$queryRaw`SELECT 1 FROM studio_config WHERE id = 1 FOR UPDATE`
+    const cfg = await tx.studioConfig.findUnique({ where: { id: 1 } })
+    if (!cfg) throw new Error('Studio config missing')
+    const plans = asPlanArray(cfg.plans_json)
+    const plan = plans.find(p => p.id === planId)
+    if (!plan) throw new Error('Unknown plan')
+
+    const client = await tx.studioClient.findUnique({ where: { id: clientId } })
+    if (!client) throw new Error('Client not found')
+
+    const sessions = Math.max(1, Math.round(Number(plan.sessions) || 0))
+    const days = Math.max(1, Math.round(Number(plan.duration_days) || 0))
+    const now = new Date()
+    const expires = new Date(now.getTime() + days * 24 * 60 * 60 * 1000)
+    const newSub: ClientSub = {
+      id: randomUUID(),
+      plan_id: plan.id,
+      plan_name: `${plan.name} (Подарунок)`,
+      total_sessions: sessions,
+      used_sessions: 0,
+      purchased_at: now.toISOString(),
+      expires_at: expires.toISOString(),
+      source: 'promo',
+      granted_by_admin: true,
+      granted_at: now.toISOString(),
+    }
+
+    const existing = (client.subscriptions_json as unknown as ClientSub[]) || []
+    await tx.studioClient.update({
+      where: { id: client.id },
+      data: { subscriptions_json: [...existing, newSub] as Prisma.InputJsonValue },
+    })
+    return { planName: plan.name, subscriptionId: newSub.id }
   })
 }
