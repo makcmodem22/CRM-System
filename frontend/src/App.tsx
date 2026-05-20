@@ -2128,12 +2128,54 @@ function AdminHub() {
 }
 
 // ── Shared: Client Detail Dialog (admin) ───────────────────────────────────
-function ClientDetailDialog({ open, client, lessons, onOpenChange }: {
+function ClientDetailDialog({ open, client, lessons, onOpenChange, adminControls }: {
   open: boolean
   client: Client | null
   lessons: ActualLesson[]
   onOpenChange: (open: boolean) => void
+  /** When present, the dialog renders admin-only actions (e.g. grant certificate). */
+  adminControls?: {
+    plans: SubscriptionPlan[]
+    onGranted: () => Promise<void> | void
+  }
 }) {
+  const [grantPlanId, setGrantPlanId] = useState('')
+  const [grantBusy, setGrantBusy] = useState(false)
+  const [grantError, setGrantError] = useState<string | null>(null)
+  const [grantSuccess, setGrantSuccess] = useState<string | null>(null)
+
+  useEffect(() => {
+    // Reset the grant form whenever the dialog is reopened on a different client
+    setGrantPlanId('')
+    setGrantError(null)
+    setGrantSuccess(null)
+  }, [client?.id, open])
+
+  const handleGrantCertificate = async () => {
+    if (!client || !adminControls) return
+    const plan = adminControls.plans.find(p => p.id === grantPlanId)
+    if (!plan) {
+      setGrantError('Оберіть абонемент')
+      return
+    }
+    const confirmMsg = `Видати клієнту «${client.name || client.email}» сертифікат «${plan.name}» (${plan.sessions} занять, ${plan.duration_days} днів)?`
+    if (!confirm(confirmMsg)) return
+    setGrantBusy(true)
+    setGrantError(null)
+    setGrantSuccess(null)
+    try {
+      const result = await studioApi.adminGrantCertificateOnServer({ clientId: client.id, planId: plan.id })
+      setGrantPlanId('')
+      setGrantSuccess(`Сертифікат «${result.planName}» видано.`)
+      await adminControls.onGranted()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Не вдалося видати сертифікат'
+      setGrantError(msg)
+    } finally {
+      setGrantBusy(false)
+    }
+  }
+
   const lessonById = useMemo(() => {
     const m = new Map<string, ActualLesson>()
     for (const l of lessons) m.set(l.id, l)
@@ -2245,6 +2287,42 @@ function ClientDetailDialog({ open, client, lessons, onOpenChange }: {
                 )}
               </section>
 
+              {adminControls && (
+                <section className="rounded-lg border border-brand-gold/30 bg-brand-gold/5 p-3">
+                  <h4 className="text-xs font-bold uppercase tracking-wide text-brand-gold mb-2 flex items-center gap-2">
+                    <Ticket className="w-3.5 h-3.5" /> Видати сертифікат
+                  </h4>
+                  <p className="text-[11px] text-muted-foreground mb-2">
+                    Абонемент буде додано клієнту як подарунковий — без оплати.
+                  </p>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <select
+                      value={grantPlanId}
+                      onChange={e => { setGrantPlanId(e.target.value); setGrantError(null); setGrantSuccess(null) }}
+                      disabled={grantBusy}
+                      className={cn(inputClasses, "sm:flex-1")}
+                      aria-label="Оберіть абонемент для подарунка"
+                    >
+                      <option value="">— Оберіть абонемент —</option>
+                      {adminControls.plans.map(p => (
+                        <option key={p.id} value={p.id}>{p.name} ({p.sessions} занять, {p.duration_days} днів)</option>
+                      ))}
+                    </select>
+                    <Button
+                      type="button"
+                      variant="brand"
+                      onClick={() => void handleGrantCertificate()}
+                      disabled={grantBusy || !grantPlanId}
+                      className="shrink-0"
+                    >
+                      {grantBusy ? 'Видаємо…' : 'Видати'}
+                    </Button>
+                  </div>
+                  {grantError && <p className="text-xs text-red-500 mt-2">{grantError}</p>}
+                  {grantSuccess && <p className="text-xs text-foreground font-semibold mt-2">✓ {grantSuccess}</p>}
+                </section>
+              )}
+
               <section>
                 <h4 className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-2">Майбутні записи ({upcoming.length})</h4>
                 {upcoming.length === 0 ? (
@@ -2318,10 +2396,21 @@ function pendingHintShown(signups: studioApi.LessonSignup[]): boolean {
 }
 
 // ── Page: Admin Clients (List + Detail) ─────────────────────────────────────
-function AdminClientsPage({ clients, lessons }: { clients: Client[]; lessons: ActualLesson[] }) {
+function AdminClientsPage({ clients, lessons, plans, reloadAppData }: {
+  clients: Client[]
+  lessons: ActualLesson[]
+  plans: SubscriptionPlan[]
+  reloadAppData: () => Promise<void>
+}) {
   const navigate = useNavigate()
   const [searchTerm, setSearchTerm] = useState('')
-  const [selectedClient, setSelectedClient] = useState<Client | null>(null)
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null)
+  /** Resolve the selected client from the latest `clients` list so a refresh after granting a
+   * certificate immediately reflects the new subscription inside the open dialog. */
+  const selectedClient = useMemo(
+    () => (selectedClientId ? clients.find(c => c.id === selectedClientId) ?? null : null),
+    [clients, selectedClientId],
+  )
 
   const filtered = useMemo(() => {
     const q = searchTerm.trim().toLowerCase()
@@ -2369,7 +2458,7 @@ function AdminClientsPage({ clients, lessons }: { clients: Client[]; lessons: Ac
               <button
                 key={c.id}
                 type="button"
-                onClick={() => setSelectedClient(c)}
+                onClick={() => setSelectedClientId(c.id)}
                 className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/40 text-left transition-colors"
               >
                 <div className="w-10 h-10 rounded-full bg-brand-gold/15 text-brand-gold flex items-center justify-center font-bold text-sm ring-1 ring-brand-gold/25 shrink-0">
@@ -2395,7 +2484,8 @@ function AdminClientsPage({ clients, lessons }: { clients: Client[]; lessons: Ac
         open={!!selectedClient}
         client={selectedClient}
         lessons={lessons}
-        onOpenChange={(o) => { if (!o) setSelectedClient(null) }}
+        onOpenChange={(o) => { if (!o) setSelectedClientId(null) }}
+        adminControls={{ plans, onGranted: reloadAppData }}
       />
     </div>
   )
@@ -3471,7 +3561,7 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
 }
 
 // ── Page: Admin Schedule Builder ─────────────────────────────────────────────
-function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppData, setLessons }: { lessons: ActualLesson[], clients: Client[], trainers: string[], classTypes: string[], reloadAppData: () => Promise<void>, setLessons: React.Dispatch<React.SetStateAction<ActualLesson[]>> }) {
+function AdminSchedulePage({ lessons, clients, trainers, classTypes, plans, reloadAppData, setLessons }: { lessons: ActualLesson[], clients: Client[], trainers: string[], classTypes: string[], plans: SubscriptionPlan[], reloadAppData: () => Promise<void>, setLessons: React.Dispatch<React.SetStateAction<ActualLesson[]>> }) {
   const navigate = useNavigate()
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date())
   const [weekPickerOpen, setWeekPickerOpen] = useState(false)
@@ -3482,7 +3572,11 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
   const [signups, setSignups] = useState<studioApi.LessonSignup[]>([])
   const [signupsLoading, setSignupsLoading] = useState(false)
   const [signupsError, setSignupsError] = useState<string | null>(null)
-  const [detailClient, setDetailClient] = useState<Client | null>(null)
+  const [detailClientId, setDetailClientId] = useState<string | null>(null)
+  const detailClient = useMemo(
+    () => (detailClientId ? clients.find(c => c.id === detailClientId) ?? null : null),
+    [clients, detailClientId],
+  )
 
   const openSignupsFor = useCallback((lesson: ActualLesson) => {
     setSignups([])
@@ -3964,7 +4058,7 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
                     key={s.bookingId}
                     type="button"
                     disabled={!linkedClient}
-                    onClick={() => linkedClient && setDetailClient(linkedClient)}
+                    onClick={() => linkedClient && setDetailClientId(linkedClient.id)}
                     className={cn(
                       "w-full flex items-center gap-3 px-3 py-2.5 rounded-md border text-left transition-colors",
                       isPending
@@ -4016,7 +4110,8 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
         open={!!detailClient}
         client={detailClient}
         lessons={lessons}
-        onOpenChange={(o) => { if (!o) setDetailClient(null) }}
+        onOpenChange={(o) => { if (!o) setDetailClientId(null) }}
+        adminControls={{ plans, onGranted: reloadAppData }}
       />
     </div>
   )
@@ -4168,8 +4263,8 @@ export default function App() {
         {/* Admin Section */}
         <Route path="/admin" element={<AdminLayout isAdminLogged={isAdminLogged} setIsAdminLogged={setIsAdminLogged} onAdminLogout={endAdminSession} onAdminLoggedIn={reloadAppData} />}>
           <Route index element={<AdminHub />} />
-          <Route path="schedule" element={<AdminSchedulePage lessons={lessons} clients={clients} trainers={trainers} classTypes={classTypes} reloadAppData={reloadAppData} setLessons={setLessons} />} />
-          <Route path="clients" element={<AdminClientsPage clients={clients} lessons={lessons} />} />
+          <Route path="schedule" element={<AdminSchedulePage lessons={lessons} clients={clients} trainers={trainers} classTypes={classTypes} plans={plans} reloadAppData={reloadAppData} setLessons={setLessons} />} />
+          <Route path="clients" element={<AdminClientsPage clients={clients} lessons={lessons} plans={plans} reloadAppData={reloadAppData} />} />
           <Route path="settings" element={<AdminSettingsPage trainers={trainers} classTypes={classTypes} plans={plans} promoCodes={promoCodes} reloadAppData={reloadAppData} />} />
           <Route path="stats" element={<AdminStatsPage lessons={lessons} clients={clients} trainers={trainers} plans={plans} />} />
         </Route>
