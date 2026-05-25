@@ -9,7 +9,7 @@ import {
   Calendar as CalendarIcon, Clock, Users, User,
   AlertTriangle, X, LogOut, Phone, Camera, Plus, Database, Settings, Pencil,
   CreditCard, Mail, Lock, ChevronDown, ChevronLeft, ChevronRight, Check, Crown, Eye, EyeOff,
-  Ticket, Award, Star, BarChart3, TrendingUp, DollarSign, Wallet, MapPin, FileText
+  Ticket, Award, Star, BarChart3, TrendingUp, DollarSign, Wallet, MapPin, FileText, Trash2
 } from 'lucide-react'
 
 import { Button } from './components/ui/button'
@@ -64,6 +64,12 @@ interface ClientSubscription {
   expires_at: string
   /** Paid plan vs promo / gift certificate — used when recording a booking */
   source?: 'purchase' | 'promo'
+  /**
+   * Retail ₴ per visit captured at grant/purchase time. Set on admin-granted ad-hoc
+   * certificates whose `plan_id` does not exist in the public plan catalogue, so
+   * booking-time math still has a per-visit value for salary stats.
+   */
+  gift_session_value?: number
 }
 
 interface ClientBookingRecord {
@@ -234,6 +240,7 @@ function certificateSessionValueForGiftBooking(client: Client, booking: ClientBo
     sub = candidates.find(isGiftLikeSubscription) ?? candidates[0]
   }
   if (!sub) return 0
+  if (sub.gift_session_value && sub.gift_session_value > 0) return sub.gift_session_value
   const plan = plans.find(p => p.id === sub.plan_id)
   if (plan && plan.sessions > 0) return plan.price / plan.sessions
   if (sub.total_sessions > 0) return SINGLE_VISIT_PRICE
@@ -249,6 +256,7 @@ function subscriptionVisitRetailValue(client: Client, booking: ClientBookingReco
   if (booking.subscription_id) {
     const sub = client.subscriptions.find(s => s.id === booking.subscription_id)
     if (sub) {
+      if (sub.gift_session_value && sub.gift_session_value > 0) return sub.gift_session_value
       const plan = plans.find(p => p.id === sub.plan_id)
       if (plan && plan.sessions > 0) return plan.price / plan.sessions
       if (sub.total_sessions > 0) return SINGLE_VISIT_PRICE
@@ -717,13 +725,15 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
   const navigate = useNavigate()
   const lesson = lessons.find(l => l.id === id)
 
-  const [step, setStep] = useState<'choose' | 'single_form' | 'sub_confirm' | 'buy_plan' | 'success'>('choose')
+  const [step, setStep] = useState<'choose' | 'single_form' | 'sub_confirm' | 'pay_after_confirm' | 'buy_plan' | 'success'>('choose')
   const [name, setName] = useState(currentClient?.name || '')
   const [phone, setPhone] = useState(currentClient?.phone || '')
   const [email, setEmail] = useState(currentClient?.email || '')
   const [isProcessing, setIsProcessing] = useState(false)
   /** Success screen: only show “абонемент” line when this booking actually used it (not one-time pay while having a sub). */
   const [successBookingUsedSubscription, setSuccessBookingUsedSubscription] = useState(false)
+  /** Success screen: client chose to pay the trainer in person — show "pay X₴ at the studio" instead of "paid". */
+  const [successBookingPayAtStudio, setSuccessBookingPayAtStudio] = useState(false)
   /** Which package to burn when several are active (null = default: certificate first, else first). */
   const [selectedSubId, setSelectedSubId] = useState<string | null>(null)
 
@@ -773,8 +783,15 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
     const subscriptionKind: 'paid' | 'gift' = isGiftLikeSubscription(sub) ? 'gift' : 'paid'
 
     const planForSub = plans.find(p => p.id === sub.plan_id)
+    // Admin-granted ad-hoc certificates won't have a matching entry in `plans`
+    // (by design — they shouldn't appear in the public catalogue), so prefer the
+    // value snapshotted on the subscription itself.
     const sessionRetailPerVisit =
-      planForSub && planForSub.sessions > 0 ? planForSub.price / planForSub.sessions : undefined
+      sub.gift_session_value && sub.gift_session_value > 0
+        ? sub.gift_session_value
+        : planForSub && planForSub.sessions > 0
+          ? planForSub.price / planForSub.sessions
+          : undefined
 
     const meta: Record<string, unknown> = {
       subscription_kind: subscriptionKind,
@@ -798,6 +815,28 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
 
     setIsProcessing(false)
     setSuccessBookingUsedSubscription(true)
+    setStep('success')
+  }
+
+  // ── Pay-after-lesson booking — slot held now, client settles with trainer at the studio ──
+  const handleBookPayAfter = async () => {
+    if (!currentClient) {
+      navigate(`/auth?redirect=/book/${lesson.id}`)
+      return
+    }
+    setIsProcessing(true)
+    try {
+      await studioApi.postBookingPayAtStudio({ lessonId: lesson.id })
+      await reloadAppData()
+    } catch (err) {
+      console.error(err)
+      alert(err instanceof Error ? err.message : 'Не вдалося записатись')
+      setIsProcessing(false)
+      return
+    }
+    setIsProcessing(false)
+    setSuccessBookingPayAtStudio(true)
+    setSuccessBookingUsedSubscription(false)
     setStep('success')
   }
 
@@ -838,7 +877,12 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
                       : 'Списано 1 візит з абонементу (у цьому пакеті більше не залишилось візитів).'}
                   </p>
                 )}
-                {!successBookingUsedSubscription && (
+                {!successBookingUsedSubscription && successBookingPayAtStudio && (
+                  <p className="text-sm text-foreground mt-2 font-medium">
+                    Сплатіть тренеру {lesson.single_visit_price}₴ на місці після заняття.
+                  </p>
+                )}
+                {!successBookingUsedSubscription && !successBookingPayAtStudio && (
                   <p className="text-sm text-muted-foreground mt-2">
                     Оплачено разовий візит ({lesson.single_visit_price}₴).
                   </p>
@@ -884,10 +928,10 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
               <div>
                 <Button variant="ghost" className="p-0 h-auto mb-3 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={()=>navigate('/')}>← Назад до розкладу</Button>
                 <h2 className="text-xl font-bold text-foreground">Оберіть тип візиту</h2>
-                <p className="text-sm text-muted-foreground mt-1">Одноразовий візит або за абонементом</p>
+                <p className="text-sm text-muted-foreground mt-1">Одноразово, абонементом або з оплатою тренеру на місці</p>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {/* Single Visit Card */}
                 <Card
                   className="cursor-pointer border-2 border-transparent hover:border-border hover:shadow-md transition-all group"
@@ -905,13 +949,43 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
                     </div>
                     <div>
                       <h3 className="font-bold text-lg text-foreground">Одноразовий візит</h3>
-                      <p className="text-sm text-muted-foreground mt-1">{currentClient ? 'Заповніть форму та підтвердіть запис.' : 'Потрібна авторизація'}</p>
+                      <p className="text-sm text-muted-foreground mt-1">{currentClient ? 'Оплата онлайн через LiqPay.' : 'Потрібна авторизація'}</p>
                     </div>
                     <div className="flex items-baseline gap-1">
                       <span className="text-2xl font-black text-foreground">{lesson.single_visit_price}</span>
                       <span className="text-sm text-muted-foreground">₴</span>
                     </div>
                     <div className="flex items-center gap-1 text-sm text-muted-foreground/90 group-hover:text-muted-foreground transition-colors">
+                      <span>Обрати</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Pay After (at studio) Card */}
+                <Card
+                  className="cursor-pointer border-2 border-transparent hover:border-emerald-500/40 hover:shadow-md transition-all group"
+                  onClick={() => {
+                    if (!currentClient) {
+                      navigate(`/auth?redirect=/book/${lesson.id}`)
+                    } else {
+                      setStep('pay_after_confirm')
+                    }
+                  }}
+                >
+                  <CardContent className="p-6 space-y-4">
+                    <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <Wallet className="w-7 h-7" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-lg text-foreground">Оплата на місці</h3>
+                      <p className="text-sm text-muted-foreground mt-1">{currentClient ? 'Сплатите тренеру готівкою після заняття.' : 'Потрібна авторизація'}</p>
+                    </div>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-2xl font-black text-foreground">{lesson.single_visit_price}</span>
+                      <span className="text-sm text-muted-foreground">₴ після заняття</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-sm text-muted-foreground/90 group-hover:text-emerald-400 transition-colors">
                       <span>Обрати</span>
                       <ChevronRight className="w-4 h-4" />
                     </div>
@@ -1056,6 +1130,44 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
                     </>
                   )
                 })()}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Step: Pay After (at studio) Confirm */}
+          {step === 'pay_after_confirm' && currentClient && (
+            <Card className="shadow-lg border-emerald-500/20">
+              <CardHeader className="pb-4 border-b border-border/70 bg-emerald-500/5 rounded-t-xl">
+                <Button variant="ghost" className="w-fit p-0 h-auto mb-2 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => setStep('choose')}>← Назад до вибору</Button>
+                <CardTitle className="text-xl font-bold flex items-center gap-2">
+                  <Wallet className="w-5 h-5 text-emerald-400" />
+                  Оплата на місці — {lesson.single_visit_price}₴
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-6 space-y-5">
+                <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-4 text-sm space-y-2">
+                  <p className="font-semibold text-foreground">Як це працює</p>
+                  <ul className="text-muted-foreground space-y-1 list-disc list-inside leading-relaxed">
+                    <li>Слот буде зарезервовано на ваше імʼя одразу після підтвердження.</li>
+                    <li>Сплатіть тренеру <b className="text-foreground">{lesson.single_visit_price}₴</b> готівкою або карткою після заняття.</li>
+                    <li>Якщо плани зміняться — скасуйте запис у листі-підтвердженні (не пізніше ніж за 1 годину до початку).</li>
+                  </ul>
+                </div>
+                <div className="bg-muted/70 rounded-xl p-4 space-y-1">
+                  <p className="text-sm text-muted-foreground"><b className="text-foreground">Клієнт:</b> {currentClient.name || '—'}</p>
+                  <p className="text-sm text-muted-foreground"><b className="text-foreground">Email:</b> {currentClient.email}</p>
+                  {currentClient.phone && (
+                    <p className="text-sm text-muted-foreground"><b className="text-foreground">Телефон:</b> {currentClient.phone}</p>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => void handleBookPayAfter()}
+                  disabled={isProcessing}
+                  className="w-full h-11 text-base bg-emerald-500 hover:bg-emerald-500/90 text-emerald-50"
+                >
+                  {isProcessing ? 'Записуємо…' : 'Записатись з оплатою на місці'}
+                </Button>
               </CardContent>
             </Card>
           )}
@@ -2128,6 +2240,9 @@ function AdminHub() {
 }
 
 // ── Shared: Client Detail Dialog (admin) ───────────────────────────────────
+const DEFAULT_GRANT_SESSIONS = '1'
+const DEFAULT_GRANT_DAYS = '30'
+
 function ClientDetailDialog({ open, client, lessons, onOpenChange, adminControls }: {
   open: boolean
   client: Client | null
@@ -2135,37 +2250,81 @@ function ClientDetailDialog({ open, client, lessons, onOpenChange, adminControls
   onOpenChange: (open: boolean) => void
   /** When present, the dialog renders admin-only actions (e.g. grant certificate). */
   adminControls?: {
-    plans: SubscriptionPlan[]
     onGranted: () => Promise<void> | void
   }
 }) {
-  const [grantPlanId, setGrantPlanId] = useState('')
+  // Free-form gift certificate: admin enters the details inline so the certificate
+  // is created on the client without polluting the public plans catalogue that other
+  // users see when buying.
+  const [grantName, setGrantName] = useState('')
+  const [grantSessions, setGrantSessions] = useState(DEFAULT_GRANT_SESSIONS)
+  const [grantDays, setGrantDays] = useState(DEFAULT_GRANT_DAYS)
+  const [grantPrice, setGrantPrice] = useState('')
   const [grantBusy, setGrantBusy] = useState(false)
   const [grantError, setGrantError] = useState<string | null>(null)
   const [grantSuccess, setGrantSuccess] = useState<string | null>(null)
+  const [revokingId, setRevokingId] = useState<string | null>(null)
+  const [revokeError, setRevokeError] = useState<string | null>(null)
+  const [revokeSuccess, setRevokeSuccess] = useState<string | null>(null)
 
   useEffect(() => {
-    // Reset the grant form whenever the dialog is reopened on a different client
-    setGrantPlanId('')
+    // Reset the grant/revoke forms whenever the dialog is reopened on a different client
+    setGrantName('')
+    setGrantSessions(DEFAULT_GRANT_SESSIONS)
+    setGrantDays(DEFAULT_GRANT_DAYS)
+    setGrantPrice('')
     setGrantError(null)
     setGrantSuccess(null)
+    setRevokingId(null)
+    setRevokeError(null)
+    setRevokeSuccess(null)
   }, [client?.id, open])
 
   const handleGrantCertificate = async () => {
     if (!client || !adminControls) return
-    const plan = adminControls.plans.find(p => p.id === grantPlanId)
-    if (!plan) {
-      setGrantError('Оберіть абонемент')
+    const name = grantName.trim()
+    if (!name) {
+      setGrantError('Введіть назву сертифіката')
       return
     }
-    const confirmMsg = `Видати клієнту «${client.name || client.email}» сертифікат «${plan.name}» (${plan.sessions} занять, ${plan.duration_days} днів)?`
+    const sessions = Math.round(Number(grantSessions))
+    if (!Number.isFinite(sessions) || sessions < 1 || sessions > 1000) {
+      setGrantError('Кількість занять має бути від 1 до 1000')
+      return
+    }
+    const durationDays = Math.round(Number(grantDays))
+    if (!Number.isFinite(durationDays) || durationDays < 1 || durationDays > 3650) {
+      setGrantError('Тривалість має бути від 1 до 3650 днів')
+      return
+    }
+    let price: number | undefined
+    const priceTrimmed = grantPrice.trim()
+    if (priceTrimmed !== '') {
+      const p = Number(priceTrimmed)
+      if (!Number.isFinite(p) || p < 0 || p > 1_000_000) {
+        setGrantError('Ціна має бути від 0 до 1 000 000')
+        return
+      }
+      price = p
+    }
+    const priceLine = price != null ? `, ціна ${price} ₴` : ''
+    const confirmMsg = `Видати клієнту «${client.name || client.email}» сертифікат «${name}» (${sessions} занять, ${durationDays} днів${priceLine})?`
     if (!confirm(confirmMsg)) return
     setGrantBusy(true)
     setGrantError(null)
     setGrantSuccess(null)
     try {
-      const result = await studioApi.adminGrantCertificateOnServer({ clientId: client.id, planId: plan.id })
-      setGrantPlanId('')
+      const result = await studioApi.adminGrantCertificateOnServer({
+        clientId: client.id,
+        name,
+        sessions,
+        durationDays,
+        ...(price != null ? { price } : {}),
+      })
+      setGrantName('')
+      setGrantSessions(DEFAULT_GRANT_SESSIONS)
+      setGrantDays(DEFAULT_GRANT_DAYS)
+      setGrantPrice('')
       setGrantSuccess(`Сертифікат «${result.planName}» видано.`)
       await adminControls.onGranted()
     } catch (err) {
@@ -2173,6 +2332,35 @@ function ClientDetailDialog({ open, client, lessons, onOpenChange, adminControls
       setGrantError(msg)
     } finally {
       setGrantBusy(false)
+    }
+  }
+
+  const handleRevokeCertificate = async (sub: ClientSubscription) => {
+    if (!client || !adminControls) return
+    // Used-sessions warning matters: bookings paid with this sub stay alive after delete,
+    // but their session credit is gone — admin must cancel them separately to refund.
+    const usedWarning = sub.used_sessions > 0
+      ? `\n\nУВАГА: вже використано ${sub.used_sessions} з ${sub.total_sessions} занять. Записи, оплачені цим абонементом, ЗАЛИШАТЬСЯ — скасуйте їх окремо, якщо потрібно повернути сесії.`
+      : ''
+    const confirmMsg = `Видалити сертифікат «${sub.plan_name}» у клієнта «${client.name || client.email}»?${usedWarning}`
+    if (!confirm(confirmMsg)) return
+    setRevokingId(sub.id)
+    setRevokeError(null)
+    setRevokeSuccess(null)
+    setGrantSuccess(null)
+    try {
+      const result = await studioApi.adminRevokeCertificateOnServer({ clientId: client.id, subscriptionId: sub.id })
+      setRevokeSuccess(
+        result.usedSessions > 0
+          ? `Сертифікат «${result.planName}» видалено (було використано ${result.usedSessions} з ${result.totalSessions} занять).`
+          : `Сертифікат «${result.planName}» видалено.`,
+      )
+      await adminControls.onGranted()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Не вдалося видалити сертифікат'
+      setRevokeError(msg)
+    } finally {
+      setRevokingId(null)
     }
   }
 
@@ -2271,7 +2459,21 @@ function ClientDetailDialog({ open, client, lessons, onOpenChange, adminControls
                           <p className="font-semibold text-sm truncate">{s.plan_name}{isGiftLikeSubscription(s) ? ' · Подарунок' : ''}</p>
                           <p className="text-xs text-muted-foreground mt-0.5">{s.used_sessions} / {s.total_sessions} · до {format(new Date(s.expires_at), 'dd.MM.yyyy')}</p>
                         </div>
-                        <Badge className="bg-brand-gold text-brand-charcoal border-0 text-[10px] shrink-0">Активний</Badge>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Badge className="bg-brand-gold text-brand-charcoal border-0 text-[10px]">Активний</Badge>
+                          {adminControls && (
+                            <button
+                              type="button"
+                              onClick={() => void handleRevokeCertificate(s)}
+                              disabled={revokingId === s.id}
+                              className="p-1.5 rounded-md text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                              aria-label={`Видалити сертифікат «${s.plan_name}»`}
+                              title="Видалити сертифікат"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))}
                     {expiredSubs.map(s => (
@@ -2280,11 +2482,27 @@ function ClientDetailDialog({ open, client, lessons, onOpenChange, adminControls
                           <p className="font-semibold text-sm truncate">{s.plan_name}</p>
                           <p className="text-xs text-muted-foreground mt-0.5">{s.used_sessions} / {s.total_sessions} · до {format(new Date(s.expires_at), 'dd.MM.yyyy')}</p>
                         </div>
-                        <Badge variant="outline" className="text-[10px] shrink-0">Завершено</Badge>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Badge variant="outline" className="text-[10px]">Завершено</Badge>
+                          {adminControls && (
+                            <button
+                              type="button"
+                              onClick={() => void handleRevokeCertificate(s)}
+                              disabled={revokingId === s.id}
+                              className="p-1.5 rounded-md text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                              aria-label={`Видалити сертифікат «${s.plan_name}»`}
+                              title="Видалити сертифікат"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
                 )}
+                {revokeError && <p className="text-xs text-red-500 mt-2">{revokeError}</p>}
+                {revokeSuccess && <p className="text-xs text-foreground font-semibold mt-2">✓ {revokeSuccess}</p>}
               </section>
 
               {adminControls && (
@@ -2292,27 +2510,73 @@ function ClientDetailDialog({ open, client, lessons, onOpenChange, adminControls
                   <h4 className="text-xs font-bold uppercase tracking-wide text-brand-gold mb-2 flex items-center gap-2">
                     <Ticket className="w-3.5 h-3.5" /> Видати сертифікат
                   </h4>
-                  <p className="text-[11px] text-muted-foreground mb-2">
-                    Абонемент буде додано клієнту як подарунковий — без оплати.
+                  <p className="text-[11px] text-muted-foreground mb-3">
+                    Введіть параметри сертифіката — він буде доданий лише цьому клієнту і не зʼявиться у списку абонементів для інших користувачів.
                   </p>
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <select
-                      value={grantPlanId}
-                      onChange={e => { setGrantPlanId(e.target.value); setGrantError(null); setGrantSuccess(null) }}
-                      disabled={grantBusy}
-                      className={cn(inputClasses, "sm:flex-1")}
-                      aria-label="Оберіть абонемент для подарунка"
-                    >
-                      <option value="">— Оберіть абонемент —</option>
-                      {adminControls.plans.map(p => (
-                        <option key={p.id} value={p.id}>{p.name} ({p.sessions} занять, {p.duration_days} днів)</option>
-                      ))}
-                    </select>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <label className="flex flex-col gap-1 sm:col-span-2">
+                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Назва сертифіката</span>
+                      <input
+                        type="text"
+                        value={grantName}
+                        onChange={e => { setGrantName(e.target.value); setGrantError(null); setGrantSuccess(null) }}
+                        disabled={grantBusy}
+                        maxLength={80}
+                        placeholder="напр. Подарунок на день народження"
+                        className={inputClasses}
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Кількість занять</span>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min={1}
+                        max={1000}
+                        step={1}
+                        value={grantSessions}
+                        onChange={e => { setGrantSessions(e.target.value); setGrantError(null); setGrantSuccess(null) }}
+                        disabled={grantBusy}
+                        className={inputClasses}
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Тривалість, днів</span>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min={1}
+                        max={3650}
+                        step={1}
+                        value={grantDays}
+                        onChange={e => { setGrantDays(e.target.value); setGrantError(null); setGrantSuccess(null) }}
+                        disabled={grantBusy}
+                        className={inputClasses}
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 sm:col-span-2">
+                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Ціна за весь сертифікат, ₴ (необовʼязково)</span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min={0}
+                        max={1_000_000}
+                        step="0.01"
+                        value={grantPrice}
+                        onChange={e => { setGrantPrice(e.target.value); setGrantError(null); setGrantSuccess(null) }}
+                        disabled={grantBusy}
+                        placeholder="напр. 1500"
+                        className={inputClasses}
+                      />
+                      <span className="text-[10px] text-muted-foreground/80">Використовується для статистики (ціна ділиться на кількість занять).</span>
+                    </label>
+                  </div>
+                  <div className="flex justify-end mt-3">
                     <Button
                       type="button"
                       variant="brand"
                       onClick={() => void handleGrantCertificate()}
-                      disabled={grantBusy || !grantPlanId}
+                      disabled={grantBusy || !grantName.trim()}
                       className="shrink-0"
                     >
                       {grantBusy ? 'Видаємо…' : 'Видати'}
@@ -2396,10 +2660,9 @@ function pendingHintShown(signups: studioApi.LessonSignup[]): boolean {
 }
 
 // ── Page: Admin Clients (List + Detail) ─────────────────────────────────────
-function AdminClientsPage({ clients, lessons, plans, reloadAppData }: {
+function AdminClientsPage({ clients, lessons, reloadAppData }: {
   clients: Client[]
   lessons: ActualLesson[]
-  plans: SubscriptionPlan[]
   reloadAppData: () => Promise<void>
 }) {
   const navigate = useNavigate()
@@ -2485,7 +2748,7 @@ function AdminClientsPage({ clients, lessons, plans, reloadAppData }: {
         client={selectedClient}
         lessons={lessons}
         onOpenChange={(o) => { if (!o) setSelectedClientId(null) }}
-        adminControls={{ plans, onGranted: reloadAppData }}
+        adminControls={{ onGranted: reloadAppData }}
       />
     </div>
   )
@@ -3561,7 +3824,7 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
 }
 
 // ── Page: Admin Schedule Builder ─────────────────────────────────────────────
-function AdminSchedulePage({ lessons, clients, trainers, classTypes, plans, reloadAppData, setLessons }: { lessons: ActualLesson[], clients: Client[], trainers: string[], classTypes: string[], plans: SubscriptionPlan[], reloadAppData: () => Promise<void>, setLessons: React.Dispatch<React.SetStateAction<ActualLesson[]>> }) {
+function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppData, setLessons }: { lessons: ActualLesson[], clients: Client[], trainers: string[], classTypes: string[], reloadAppData: () => Promise<void>, setLessons: React.Dispatch<React.SetStateAction<ActualLesson[]>> }) {
   const navigate = useNavigate()
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date())
   const [weekPickerOpen, setWeekPickerOpen] = useState(false)
@@ -4028,6 +4291,8 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, plans, relo
               {(() => {
                 const confirmedCount = signups.filter(s => s.status === 'CONFIRMED').length
                 const pendingCount = signups.length - confirmedCount
+                const payAtStudioRows = signups.filter(s => s.pay_at_studio && s.status === 'CONFIRMED')
+                const payAtStudioTotal = payAtStudioRows.reduce((sum, s) => sum + (s.pay_amount ?? 0), 0)
                 return (
                   <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                     <span className="text-muted-foreground">
@@ -4041,6 +4306,17 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, plans, relo
                         </span>
                       </>
                     )}
+                    {payAtStudioRows.length > 0 && (
+                      <>
+                        <span className="text-muted-foreground/50">·</span>
+                        <span className="text-muted-foreground">
+                          Оплата на місці: <span className="font-semibold text-emerald-300 tabular-nums">{payAtStudioRows.length}</span>
+                          {payAtStudioTotal > 0 && (
+                            <span className="text-muted-foreground/80"> · до збору <span className="font-semibold text-emerald-300 tabular-nums">{payAtStudioTotal}₴</span></span>
+                          )}
+                        </span>
+                      </>
+                    )}
                     <span className="text-muted-foreground/50">·</span>
                     <span className="text-muted-foreground">
                       Усього: <span className="font-semibold text-foreground tabular-nums">{signups.length}</span>
@@ -4050,9 +4326,24 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, plans, relo
               })()}
               {signups.map(s => {
                 const linkedClient = findClientForSignup(s, clients)
-                const kindLabel = s.subscription_kind === 'gift' ? 'Подарунок' : s.subscription_kind === 'paid' ? 'Абонемент' : 'Разово'
-                const kindColor = s.subscription_kind === 'gift' ? 'bg-purple-500/20 text-purple-200' : s.subscription_kind === 'paid' ? 'bg-brand-gold/20 text-brand-gold' : 'bg-white/10 text-muted-foreground'
                 const isPending = s.status === 'PENDING_PAYMENT'
+                // pay_at_studio takes precedence over the subscription_kind label: the trainer
+                // cares first about who still owes money, not which package backed the booking.
+                const isPayAtStudio = s.pay_at_studio === true && !isPending
+                const kindLabel = isPayAtStudio
+                  ? 'Оплата на місці'
+                  : s.subscription_kind === 'gift'
+                    ? 'Подарунок'
+                    : s.subscription_kind === 'paid'
+                      ? 'Абонемент'
+                      : 'Разово'
+                const kindColor = isPayAtStudio
+                  ? 'bg-emerald-500/20 text-emerald-200'
+                  : s.subscription_kind === 'gift'
+                    ? 'bg-purple-500/20 text-purple-200'
+                    : s.subscription_kind === 'paid'
+                      ? 'bg-brand-gold/20 text-brand-gold'
+                      : 'bg-white/10 text-muted-foreground'
                 return (
                   <button
                     key={s.bookingId}
@@ -4063,13 +4354,19 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, plans, relo
                       "w-full flex items-center gap-3 px-3 py-2.5 rounded-md border text-left transition-colors",
                       isPending
                         ? "border-amber-500/30 bg-amber-950/15"
-                        : "border-white/[0.06] bg-muted/25",
+                        : isPayAtStudio
+                          ? "border-emerald-500/30 bg-emerald-950/15"
+                          : "border-white/[0.06] bg-muted/25",
                       linkedClient ? "hover:bg-muted/50 hover:border-brand-gold/40 cursor-pointer" : "opacity-70 cursor-not-allowed",
                     )}
                   >
                     <div className={cn(
                       "w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm ring-1 shrink-0",
-                      isPending ? "bg-amber-500/15 text-amber-300 ring-amber-500/30" : "bg-brand-gold/15 text-brand-gold ring-brand-gold/25",
+                      isPending
+                        ? "bg-amber-500/15 text-amber-300 ring-amber-500/30"
+                        : isPayAtStudio
+                          ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30"
+                          : "bg-brand-gold/15 text-brand-gold ring-brand-gold/25",
                     )}>
                       {(s.name || s.email || '?').slice(0, 1).toUpperCase()}
                     </div>
@@ -4085,6 +4382,9 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, plans, relo
                       ) : (
                         <span className={cn("text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded", kindColor)}>{kindLabel}</span>
                       )}
+                      {isPayAtStudio && s.pay_amount != null && s.pay_amount > 0 && (
+                        <span className="text-[10px] font-semibold text-emerald-200 tabular-nums">{s.pay_amount}₴</span>
+                      )}
                       {!s.client_user_id && !linkedClient && (
                         <span className="text-[9px] text-muted-foreground/70 uppercase">Гість</span>
                       )}
@@ -4095,6 +4395,11 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, plans, relo
               {pendingHintShown(signups) && (
                 <p className="text-[11px] text-muted-foreground/80 mt-2 leading-snug">
                   Слоти з позначкою «Очікує оплати» зарезервовані, поки клієнт у процесі оплати LiqPay. Якщо оплата не відбудеться протягом 60 хв, слот автоматично звільниться.
+                </p>
+              )}
+              {signups.some(s => s.pay_at_studio && s.status === 'CONFIRMED') && (
+                <p className="text-[11px] text-emerald-200/90 mt-2 leading-snug">
+                  Клієнти з позначкою «Оплата на місці» сплачують тренеру готівкою або карткою після заняття.
                 </p>
               )}
             </div>
@@ -4111,7 +4416,7 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, plans, relo
         client={detailClient}
         lessons={lessons}
         onOpenChange={(o) => { if (!o) setDetailClientId(null) }}
-        adminControls={{ plans, onGranted: reloadAppData }}
+        adminControls={{ onGranted: reloadAppData }}
       />
     </div>
   )
@@ -4263,8 +4568,8 @@ export default function App() {
         {/* Admin Section */}
         <Route path="/admin" element={<AdminLayout isAdminLogged={isAdminLogged} setIsAdminLogged={setIsAdminLogged} onAdminLogout={endAdminSession} onAdminLoggedIn={reloadAppData} />}>
           <Route index element={<AdminHub />} />
-          <Route path="schedule" element={<AdminSchedulePage lessons={lessons} clients={clients} trainers={trainers} classTypes={classTypes} plans={plans} reloadAppData={reloadAppData} setLessons={setLessons} />} />
-          <Route path="clients" element={<AdminClientsPage clients={clients} lessons={lessons} plans={plans} reloadAppData={reloadAppData} />} />
+          <Route path="schedule" element={<AdminSchedulePage lessons={lessons} clients={clients} trainers={trainers} classTypes={classTypes} reloadAppData={reloadAppData} setLessons={setLessons} />} />
+          <Route path="clients" element={<AdminClientsPage clients={clients} lessons={lessons} reloadAppData={reloadAppData} />} />
           <Route path="settings" element={<AdminSettingsPage trainers={trainers} classTypes={classTypes} plans={plans} promoCodes={promoCodes} reloadAppData={reloadAppData} />} />
           <Route path="stats" element={<AdminStatsPage lessons={lessons} clients={clients} trainers={trainers} plans={plans} />} />
         </Route>

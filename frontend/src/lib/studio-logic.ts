@@ -28,6 +28,12 @@ export type ClientSub = {
   granted_by_admin?: boolean
   /** Audit: ISO timestamp of the admin grant. */
   granted_at?: string
+  /**
+   * Retail ₴ per visit captured at grant/purchase time. Lets salary stats compute the per-visit
+   * value without looking up `plans_json` — required for admin-granted ad-hoc certificates
+   * whose `plan_id` intentionally does not exist in the public plan catalogue.
+   */
+  gift_session_value?: number
 }
 
 type ClientBookingMeta = {
@@ -35,6 +41,10 @@ type ClientBookingMeta = {
   subscription_id?: string
   certificate_session_value?: number
   subscription_session_value?: number
+  /** Client booked agreeing to pay the trainer in person after the lesson. */
+  pay_at_studio?: boolean
+  /** ₴ snapshot of single_visit_price at the moment the pay-at-studio booking was made. */
+  pay_amount?: number
 }
 
 export function asStringArray(v: unknown): string[] {
@@ -229,6 +239,10 @@ export type LessonSignup = {
   created_at: string
   subscription_kind?: 'paid' | 'gift'
   subscription_id?: string
+  /** Client opted into "pay the trainer at the studio after the lesson" — trainer collects in person. */
+  pay_at_studio?: boolean
+  /** ₴ to collect when pay_at_studio is true (snapshot at booking time). */
+  pay_amount?: number
 }
 
 /**
@@ -265,6 +279,8 @@ export async function listLessonSignups(lessonId: string): Promise<LessonSignup[
       created_at: r.created_at.toISOString(),
       subscription_kind: meta.subscription_kind,
       subscription_id: meta.subscription_id,
+      pay_at_studio: meta.pay_at_studio === true ? true : undefined,
+      pay_amount: typeof meta.pay_amount === 'number' ? meta.pay_amount : undefined,
     }
   })
 }
@@ -870,6 +886,64 @@ export async function postBookingRow(body: {
 }
 
 /**
+ * Books a lesson with the explicit understanding that the client will pay the trainer
+ * at the studio after the class (no LiqPay, no subscription decrement). The booking is
+ * CONFIRMED immediately — the slot is held — and the lesson's `single_visit_price` is
+ * snapshotted into `meta.pay_amount` so the trainer can see what to collect even if
+ * the lesson's price is later edited. The `meta.pay_at_studio: true` flag is what the
+ * signups list keys off to render the "Оплата на місці" badge.
+ */
+export async function postBookingPayAtStudioRow(body: {
+  lessonId: string
+  client_user_id: string
+  client_email: string
+  client_name: string
+}): Promise<CreatedBooking & { payAmount: number }> {
+  return prisma.$transaction(async tx => {
+    const reserved = await tx.$executeRaw`
+      UPDATE public_lesson
+      SET booked_count = booked_count + 1
+      WHERE id = ${body.lessonId}
+        AND status = 'SCHEDULED'
+        AND booked_count < capacity
+    `
+    if (reserved === 0) {
+      const lesson = await tx.publicLesson.findUnique({ where: { id: body.lessonId } })
+      if (!lesson) throw new Error('Lesson not found')
+      if (lesson.status !== 'SCHEDULED') throw new Error('Class is not available for booking')
+      throw new Error('Class is full')
+    }
+    const lesson = await tx.publicLesson.findUnique({ where: { id: body.lessonId } })
+    if (!lesson) throw new Error('Lesson not found')
+    if (lesson.start_timestamp.getTime() <= Date.now()) {
+      throw new Error('Заняття вже почалося')
+    }
+    const payAmount = Math.max(0, Math.round(lesson.single_visit_price))
+    const booking = await tx.publicLessonBooking.create({
+      data: {
+        lesson_id: body.lessonId,
+        client_email: body.client_email.trim(),
+        client_name: (body.client_name || 'Гість').trim(),
+        client_user_id: body.client_user_id,
+        status: 'CONFIRMED',
+        meta: {
+          pay_at_studio: true,
+          pay_amount: payAmount,
+        } as Prisma.InputJsonValue,
+      },
+    })
+    return {
+      bookingId: booking.id,
+      className: lesson.class_name,
+      trainerName: lesson.trainer_name,
+      startTimestamp: lesson.start_timestamp,
+      endTimestamp: lesson.end_timestamp,
+      payAmount,
+    }
+  })
+}
+
+/**
  * Books a lesson and decrements the named subscription's remaining sessions atomically.
  * Server-side it re-reads the client's subscriptions and validates the chosen subscription
  * has remaining sessions, so a stale or hostile client can't grant itself extra sessions.
@@ -1186,42 +1260,64 @@ export async function redeemPromoRow(body: { code: string; clientId: string; cli
 }
 
 /**
- * Admin-driven direct grant of a gift subscription. The plan is snapshotted from
- * `studio_config.plans_json` under a row lock, so a hostile/stale client cannot
- * forge plan name, sessions, price, or duration. The grant is appended atomically
- * to the target client's `subscriptions_json` along with audit metadata.
+ * Admin-driven direct grant of a one-off gift certificate. The admin supplies the name,
+ * session count, duration, and optional price inline — nothing is read from `plans_json`,
+ * so the gift never appears in the public catalogue other clients see when buying.
+ *
+ * The certificate is materialised as a `ClientSub` with a synthetic `plan_id` (no row in
+ * `plans_json` will ever match it). The supplied price is snapshotted as `gift_session_value`
+ * so booking-time salary math has a per-visit retail figure even though the plan id is opaque.
  *
  * Caller is responsible for asserting admin auth before invoking this.
  */
 export async function adminGrantCertificateToClient(body: {
   clientId: string
-  planId: string
+  name: string
+  sessions: number
+  durationDays: number
+  /** Total package price in ₴. When provided, drives the per-visit retail for salary stats. */
+  price?: number
 }): Promise<{ planName: string; subscriptionId: string }> {
   const clientId = String(body.clientId || '').trim()
-  const planId = String(body.planId || '').trim()
+  const rawName = String(body.name || '').trim()
   if (!clientId) throw new Error('Client is required')
-  if (!planId) throw new Error('Plan is required')
-  return prisma.$transaction(async tx => {
-    // Lock the config row so a concurrent plan edit can't change the snapshot
-    // after we read it but before we write the subscription.
-    await tx.$queryRaw`SELECT 1 FROM studio_config WHERE id = 1 FOR UPDATE`
-    const cfg = await tx.studioConfig.findUnique({ where: { id: 1 } })
-    if (!cfg) throw new Error('Studio config missing')
-    const plans = asPlanArray(cfg.plans_json)
-    const plan = plans.find(p => p.id === planId)
-    if (!plan) throw new Error('Unknown plan')
+  if (!rawName) throw new Error('Назва сертифіката обовʼязкова')
+  // Cap length so a runaway paste doesn't bloat the JSON column.
+  const name = rawName.slice(0, 80)
+  const sessions = Math.round(Number(body.sessions))
+  const days = Math.round(Number(body.durationDays))
+  if (!Number.isFinite(sessions) || sessions < 1 || sessions > 1000) {
+    throw new Error('Кількість занять має бути від 1 до 1000')
+  }
+  if (!Number.isFinite(days) || days < 1 || days > 3650) {
+    throw new Error('Тривалість має бути від 1 до 3650 днів')
+  }
+  let priceValue: number | undefined
+  if (body.price != null && body.price !== ('' as unknown as number)) {
+    const p = Number(body.price)
+    if (!Number.isFinite(p) || p < 0 || p > 1_000_000) {
+      throw new Error('Ціна має бути від 0 до 1 000 000')
+    }
+    priceValue = p
+  }
+  // Bracket name with the gift marker so client-side UI (which keys off the suffix)
+  // recognises it regardless of what the admin typed.
+  const planName = name.includes('(Подарунок)') ? name : `${name} (Подарунок)`
 
+  return prisma.$transaction(async tx => {
+    // Lock the target client row so two concurrent grants can't race the read-modify-write
+    // on `subscriptions_json` and lose one of the grants.
+    await tx.$queryRaw`SELECT 1 FROM studio_client WHERE id = ${clientId} FOR UPDATE`
     const client = await tx.studioClient.findUnique({ where: { id: clientId } })
     if (!client) throw new Error('Client not found')
 
-    const sessions = Math.max(1, Math.round(Number(plan.sessions) || 0))
-    const days = Math.max(1, Math.round(Number(plan.duration_days) || 0))
     const now = new Date()
     const expires = new Date(now.getTime() + days * 24 * 60 * 60 * 1000)
     const newSub: ClientSub = {
       id: randomUUID(),
-      plan_id: plan.id,
-      plan_name: `${plan.name} (Подарунок)`,
+      // Synthetic id: no entry in `plans_json` will match, which is the point.
+      plan_id: `admin_grant_${randomUUID()}`,
+      plan_name: planName,
       total_sessions: sessions,
       used_sessions: 0,
       purchased_at: now.toISOString(),
@@ -1229,6 +1325,9 @@ export async function adminGrantCertificateToClient(body: {
       source: 'promo',
       granted_by_admin: true,
       granted_at: now.toISOString(),
+      ...(priceValue != null && sessions > 0
+        ? { gift_session_value: priceValue / sessions }
+        : {}),
     }
 
     const existing = (client.subscriptions_json as unknown as ClientSub[]) || []
@@ -1236,6 +1335,50 @@ export async function adminGrantCertificateToClient(body: {
       where: { id: client.id },
       data: { subscriptions_json: [...existing, newSub] as Prisma.InputJsonValue },
     })
-    return { planName: plan.name, subscriptionId: newSub.id }
+    return { planName: name, subscriptionId: newSub.id }
+  })
+}
+
+/**
+ * Admin-driven revoke of a single subscription from a client's `subscriptions_json`.
+ * Use case: admin granted the wrong plan (or the wrong client) and needs to undo before
+ * issuing the correct one.
+ *
+ * Bookings that were already paid with this subscription are intentionally left in
+ * place — they keep a dangling `meta.subscription_id`, which means the per-booking
+ * refund step in cancel paths becomes a no-op for this id. That's correct: the
+ * subscription is gone, so there's nothing to credit back to. If the admin wants to
+ * undo a redemption that already consumed sessions, they must cancel those bookings
+ * separately (which will still decrement the lesson's `booked_count`).
+ *
+ * Returns the deleted subscription's plan name + usage counters so the admin UI can
+ * surface "X of Y sessions had already been used" after the fact.
+ *
+ * Caller is responsible for asserting admin auth before invoking this.
+ */
+export async function adminRevokeCertificateFromClient(body: {
+  clientId: string
+  subscriptionId: string
+}): Promise<{ planName: string; usedSessions: number; totalSessions: number }> {
+  const clientId = String(body.clientId || '').trim()
+  const subscriptionId = String(body.subscriptionId || '').trim()
+  if (!clientId) throw new Error('Client is required')
+  if (!subscriptionId) throw new Error('Subscription is required')
+  return prisma.$transaction(async tx => {
+    const client = await tx.studioClient.findUnique({ where: { id: clientId } })
+    if (!client) throw new Error('Client not found')
+    const subs = (client.subscriptions_json as unknown as ClientSub[]) || []
+    const target = subs.find(s => s.id === subscriptionId)
+    if (!target) throw new Error('Subscription not found')
+    const remaining = subs.filter(s => s.id !== subscriptionId)
+    await tx.studioClient.update({
+      where: { id: client.id },
+      data: { subscriptions_json: remaining as Prisma.InputJsonValue },
+    })
+    return {
+      planName: target.plan_name,
+      usedSessions: target.used_sessions || 0,
+      totalSessions: target.total_sessions || 0,
+    }
   })
 }
