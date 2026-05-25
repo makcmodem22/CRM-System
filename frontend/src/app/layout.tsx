@@ -1,10 +1,22 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import type { ReactNode } from 'react'
 import './globals.css'
 
 export const metadata: Metadata = {
   title: 'Brave! Yoga — Студія твого балансу',
   description: 'Запис на заняття, абонементи та розклад.',
+}
+
+/**
+ * Lock the mobile viewport so the page renders at the device's real width — without
+ * this, an overlooked override or stray meta tag can leave iOS/Android rendering at
+ * the desktop default (~980px) and the user sees a zoomed-in, cropped layout.
+ * `maximumScale` is intentionally left unset so users can still pinch-zoom for
+ * accessibility.
+ */
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
 }
 
 export default function RootLayout({ children }: { children: ReactNode }) {
