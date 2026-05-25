@@ -20,11 +20,13 @@ import {
   createPlanPurchasePayment,
   getPaymentStatusForOrder,
   postBookingWithSubscriptionRow,
+  postBookingPayAtStudioRow,
   cancelBookingByIdRow,
   cancelOwnedBookingRow,
   getLessonForCancelByToken,
   redeemPromoRow,
   adminGrantCertificateToClient,
+  adminRevokeCertificateFromClient,
   ensureStudioClientForUser,
   listLessonSignups,
   type LessonSignup,
@@ -238,6 +240,38 @@ export async function postBookingWithSubscriptionAction(body: {
   return { ok: true as const, bookingId: created.bookingId }
 }
 
+/**
+ * Reserve a slot now, pay the trainer in person at the studio. Creates a CONFIRMED booking
+ * with `meta.pay_at_studio` set so the trainer's signups list can flag the row. Identity is
+ * always read from the Supabase session — guests cannot use this path (they must sign in so
+ * the studio has a name/phone to recognise them at the door).
+ */
+export async function postBookingPayAtStudioAction(body: { lessonId: string }) {
+  const user = await requireUser()
+  await rateLimitByIp('book', 10, 60_000)
+  if (typeof body?.lessonId !== 'string' || !body.lessonId.trim()) {
+    throw new Error('lessonId is required')
+  }
+  const sc = await ensureStudioClientForUser(user)
+  const created = await postBookingPayAtStudioRow({
+    lessonId: body.lessonId,
+    client_user_id: user.id,
+    client_email: sc.email,
+    client_name: sc.name,
+  })
+  await trySendBookingEmail({
+    to: sc.email,
+    clientName: sc.name || 'Гість',
+    className: created.className,
+    startTimestamp: created.startTimestamp,
+    endTimestamp: created.endTimestamp,
+    trainerName: created.trainerName,
+    lessonId: body.lessonId,
+    bookingId: created.bookingId,
+  })
+  return { ok: true as const, bookingId: created.bookingId, payAmount: created.payAmount }
+}
+
 export async function cancelBookingAction(args: {
   lessonId: string
   /** Signed cancel token from the confirmation email. When omitted, the caller must be the booking's owner. */
@@ -284,22 +318,62 @@ export async function redeemPromoAction(body: { code: string }) {
 }
 
 /**
- * Admin-only: grant a gift subscription directly to a chosen client. The plan name,
- * session count, and duration are snapshotted server-side from the studio config; the
- * caller only supplies opaque IDs. Rate-limited per admin IP as a backstop against
- * accidental loops or a leaked admin cookie.
+ * Admin-only: grant a one-off gift certificate directly to a chosen client. The admin
+ * provides the certificate details inline (name / sessions / duration / optional price);
+ * nothing is read from the public plans catalogue, so the gift never appears to other
+ * clients on the buy page. Rate-limited per admin IP as a backstop against accidental
+ * loops or a leaked admin cookie.
  */
-export async function adminGrantCertificateAction(body: { clientId: string; planId: string }) {
+export async function adminGrantCertificateAction(body: {
+  clientId: string
+  name: string
+  sessions: number
+  durationDays: number
+  price?: number
+}) {
   await assertAdmin()
   await rateLimitByIp('admin-grant-cert', 30, 60_000)
-  if (typeof body?.clientId !== 'string' || typeof body?.planId !== 'string') {
-    throw new Error('clientId and planId are required')
+  if (typeof body?.clientId !== 'string' || typeof body?.name !== 'string') {
+    throw new Error('clientId and name are required')
+  }
+  if (typeof body?.sessions !== 'number' || typeof body?.durationDays !== 'number') {
+    throw new Error('sessions and durationDays must be numbers')
+  }
+  if (body.price != null && typeof body.price !== 'number') {
+    throw new Error('price must be a number when provided')
   }
   const result = await adminGrantCertificateToClient({
     clientId: body.clientId,
-    planId: body.planId,
+    name: body.name,
+    sessions: body.sessions,
+    durationDays: body.durationDays,
+    price: body.price,
   })
   return { ok: true as const, planName: result.planName, subscriptionId: result.subscriptionId }
+}
+
+/**
+ * Admin-only: undo a previously granted subscription. Intended for fixing wrong grants
+ * (wrong plan, wrong client) before the client uses it. Existing bookings already paid
+ * with this subscription are left in place — see {@link adminRevokeCertificateFromClient}.
+ * Rate-limited per admin IP as a backstop against accidental loops or a leaked cookie.
+ */
+export async function adminRevokeCertificateAction(body: { clientId: string; subscriptionId: string }) {
+  await assertAdmin()
+  await rateLimitByIp('admin-revoke-cert', 30, 60_000)
+  if (typeof body?.clientId !== 'string' || typeof body?.subscriptionId !== 'string') {
+    throw new Error('clientId and subscriptionId are required')
+  }
+  const result = await adminRevokeCertificateFromClient({
+    clientId: body.clientId,
+    subscriptionId: body.subscriptionId,
+  })
+  return {
+    ok: true as const,
+    planName: result.planName,
+    usedSessions: result.usedSessions,
+    totalSessions: result.totalSessions,
+  }
 }
 
 async function trySendBookingEmail(args: {

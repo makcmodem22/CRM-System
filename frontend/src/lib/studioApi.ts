@@ -10,10 +10,12 @@ import {
   purchasePlanAction,
   postBookingAction,
   postBookingWithSubscriptionAction,
+  postBookingPayAtStudioAction,
   cancelBookingAction,
   fetchLessonForCancelAction,
   redeemPromoAction,
   adminGrantCertificateAction,
+  adminRevokeCertificateAction,
   listLessonSignupsAction,
   getPaymentStatusAction,
 } from '@/app/actions/studio'
@@ -29,6 +31,8 @@ export type LessonSignup = {
   created_at: string
   subscription_kind?: 'paid' | 'gift'
   subscription_id?: string
+  pay_at_studio?: boolean
+  pay_amount?: number
 }
 
 export type BootstrapPayload = {
@@ -133,6 +137,10 @@ export async function postBookingWithSubscription(body: {
   return postBookingWithSubscriptionAction(body)
 }
 
+export async function postBookingPayAtStudio(body: { lessonId: string }) {
+  return postBookingPayAtStudioAction(body)
+}
+
 export async function cancelBookingOnServer(args: { lessonId: string; token?: string }) {
   return cancelBookingAction(args)
 }
@@ -145,8 +153,18 @@ export async function redeemPromoOnServer(body: { code: string }) {
   return redeemPromoAction(body)
 }
 
-export async function adminGrantCertificateOnServer(body: { clientId: string; planId: string }) {
+export async function adminGrantCertificateOnServer(body: {
+  clientId: string
+  name: string
+  sessions: number
+  durationDays: number
+  price?: number
+}) {
   return adminGrantCertificateAction(body)
+}
+
+export async function adminRevokeCertificateOnServer(body: { clientId: string; subscriptionId: string }) {
+  return adminRevokeCertificateAction(body)
 }
 
 export async function fetchLessonSignups(lessonId: string): Promise<LessonSignup[]> {
