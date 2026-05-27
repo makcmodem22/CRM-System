@@ -313,6 +313,7 @@ export async function getBootstrapData(opts: { isAdmin: boolean; userId: string 
     booked_count: l.booked_count,
     status: l.status,
     single_visit_price: l.single_visit_price,
+    accepts_certificates: l.accepts_certificates,
   }))
 
   let clients: ClientPayload[]
@@ -364,6 +365,7 @@ export async function createLesson(data: {
   capacity: number
   status?: string
   single_visit_price?: number
+  accepts_certificates?: boolean
 }) {
   await prisma.publicLesson.create({
     data: {
@@ -376,6 +378,7 @@ export async function createLesson(data: {
       booked_count: 0,
       status: data.status || 'SCHEDULED',
       single_visit_price: Math.max(0, Math.round(Number(data.single_visit_price ?? 300))),
+      accepts_certificates: data.accepts_certificates ?? true,
     },
   })
 }
@@ -417,6 +420,7 @@ export async function updateLessonById(
     start_timestamp: string
     end_timestamp: string
     single_visit_price?: number
+    accepts_certificates?: boolean
   },
 ) {
   await prisma.publicLesson.update({
@@ -428,6 +432,9 @@ export async function updateLessonById(
       end_timestamp: new Date(data.end_timestamp),
       ...(data.single_visit_price != null
         ? { single_visit_price: Math.max(0, Math.round(Number(data.single_visit_price))) }
+        : {}),
+      ...(data.accepts_certificates != null
+        ? { accepts_certificates: data.accepts_certificates }
         : {}),
     },
   })
@@ -865,6 +872,19 @@ export async function postBookingRow(body: {
     }
     const lesson = await tx.publicLesson.findUnique({ where: { id: body.lessonId } })
     if (!lesson) throw new Error('Lesson not found')
+    // Strip subscription-provenance fields: this path never deducts a sub credit, so a
+    // booking it produces must never be treated as refundable when a lesson is cancelled.
+    let safeMeta: Record<string, unknown> | null = null
+    if (body.meta && typeof body.meta === 'object') {
+      const m = { ...(body.meta as Record<string, unknown>) }
+      delete m.subscription_id
+      delete m.subscription_kind
+      delete m.subscription_session_value
+      delete m.certificate_session_value
+      delete m.pay_at_studio
+      delete m.pay_amount
+      safeMeta = Object.keys(m).length > 0 ? m : null
+    }
     const booking = await tx.publicLessonBooking.create({
       data: {
         lesson_id: body.lessonId,
@@ -872,7 +892,7 @@ export async function postBookingRow(body: {
         client_name: (body.client_name || 'Гість').trim(),
         client_user_id: body.client_user_id || null,
         status: 'CONFIRMED',
-        meta: body.meta ? (body.meta as Prisma.InputJsonValue) : Prisma.JsonNull,
+        meta: safeMeta ? (safeMeta as Prisma.InputJsonValue) : Prisma.JsonNull,
       },
     })
     return {
@@ -985,7 +1005,30 @@ export async function postBookingWithSubscriptionRow(body: {
       throw new Error('Заняття вже почалося')
     }
 
-    const meta = { ...(body.meta || {}), subscription_id: sub.id }
+    // Decide gift-ness from the *persisted* subscription, never from caller-supplied meta.
+    // This both enforces the per-lesson certificate restriction and seeds an authoritative
+    // `subscription_kind` so the persisted booking row can't be relabeled by the client.
+    const isGift =
+      sub.source === 'promo' ||
+      sub.granted_by_admin === true ||
+      /\bподарунок\b/i.test(sub.plan_name)
+    if (lesson.accepts_certificates === false && isGift) {
+      throw new Error('Це заняття не приймає сертифікати')
+    }
+
+    const safeIncoming = body.meta && typeof body.meta === 'object'
+      ? (() => {
+          const m = { ...(body.meta as Record<string, unknown>) }
+          delete m.subscription_id
+          delete m.subscription_kind
+          return m
+        })()
+      : {}
+    const meta = {
+      ...safeIncoming,
+      subscription_id: sub.id,
+      subscription_kind: isGift ? 'gift' : 'paid',
+    }
     const booking = await tx.publicLessonBooking.create({
       data: {
         lesson_id: body.lessonId,
