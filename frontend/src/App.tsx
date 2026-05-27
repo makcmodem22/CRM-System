@@ -41,6 +41,7 @@ interface ActualLesson {
   booked_count: number
   status: LessonStatus
   single_visit_price: number
+  accepts_certificates: boolean
   is_booked_by_me?: boolean
   my_booking_name?: string
   my_booking_email?: string
@@ -771,12 +772,20 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
   const handleBookWithSub = async () => {
     if (!currentClient) return
     const actives = listActiveSubscriptions(currentClient)
+    const defaultPickFor = (allowGift: boolean) =>
+      allowGift
+        ? (actives.find(isGiftLikeSubscription)?.id ?? actives[0]?.id)
+        : (actives.find(s => !isGiftLikeSubscription(s))?.id ?? null)
     const pickedId =
       selectedSubId && actives.some(s => s.id === selectedSubId)
         ? selectedSubId
-        : (actives.find(isGiftLikeSubscription)?.id ?? actives[0]?.id)
+        : defaultPickFor(lesson.accepts_certificates)
     const sub = actives.find(s => s.id === pickedId) ?? getActiveSubscription(currentClient)
     if (!sub || sub.used_sessions >= sub.total_sessions) return
+    if (!lesson.accepts_certificates && isGiftLikeSubscription(sub)) {
+      alert('Це заняття не входить до сертифікатних планів — оберіть куплений абонемент або одноразовий візит.')
+      return
+    }
     setIsProcessing(true)
     await new Promise(r => setTimeout(r, 800))
 
@@ -1087,28 +1096,45 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
                 {(() => {
                   const actives = listActiveSubscriptions(currentClient)
                   if (!actives.length) return <p className="text-muted-foreground">Не знайдено активний абонемент</p>
-                  const defaultId = actives.find(isGiftLikeSubscription)?.id ?? actives[0].id
-                  const effectiveId = (selectedSubId && actives.some(s => s.id === selectedSubId) ? selectedSubId : defaultId)
+                  const acceptsCerts = lesson.accepts_certificates
+                  const isEligible = (s: ClientSubscription) => acceptsCerts || !isGiftLikeSubscription(s)
+                  const eligibleDefault = acceptsCerts
+                    ? (actives.find(isGiftLikeSubscription)?.id ?? actives[0].id)
+                    : (actives.find(s => !isGiftLikeSubscription(s))?.id ?? null)
+                  const selectedEligible = selectedSubId && actives.some(s => s.id === selectedSubId && isEligible(s))
+                  const effectiveId = selectedEligible ? selectedSubId : eligibleDefault
+                  const noEligible = eligibleDefault == null
                   return (
                     <>
+                      {!acceptsCerts && (
+                        <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-3 text-sm text-amber-200">
+                          Це заняття не входить до сертифікатних планів — подарункові абонементи не можна списати.
+                        </div>
+                      )}
                       {actives.length > 1 && (
                         <p className="text-sm text-muted-foreground">
-                          У вас кілька активних пакетів. Оберіть, з якого спишеться візит (сертифікат за замовчуванням).
+                          У вас кілька активних пакетів. Оберіть, з якого спишеться візит{acceptsCerts ? ' (сертифікат за замовчуванням).' : '.'}
                         </p>
                       )}
                       <div className="space-y-2">
                         {actives.map(s => {
                           const gift = isGiftLikeSubscription(s)
                           const remaining = s.total_sessions - s.used_sessions
-                          const sel = s.id === effectiveId
+                          const eligible = isEligible(s)
+                          const sel = eligible && s.id === effectiveId
                           return (
                             <button
                               key={s.id}
                               type="button"
-                              onClick={() => setSelectedSubId(s.id)}
+                              disabled={!eligible}
+                              onClick={() => eligible && setSelectedSubId(s.id)}
                               className={cn(
                                 'w-full text-left rounded-xl border p-4 transition-colors',
-                                sel ? 'border-brand-gold bg-brand-gold/15 ring-1 ring-brand-gold/30' : 'border-border bg-card/60 hover:border-brand-gold/35'
+                                !eligible
+                                  ? 'border-border/60 bg-muted/30 opacity-60 cursor-not-allowed'
+                                  : sel
+                                    ? 'border-brand-gold bg-brand-gold/15 ring-1 ring-brand-gold/30'
+                                    : 'border-border bg-card/60 hover:border-brand-gold/35'
                               )}
                             >
                               <p className="text-sm font-semibold text-foreground">{s.plan_name}</p>
@@ -1116,6 +1142,9 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
                                 {gift ? 'Сертифікат / подарунок' : 'Куплений абонемент'} · залишилось {remaining} з {s.total_sessions}
                               </p>
                               <p className="text-[10px] text-muted-foreground/80 mt-1">до {format(new Date(s.expires_at), 'dd.MM.yyyy')}</p>
+                              {!eligible && (
+                                <p className="text-[11px] text-amber-300/90 mt-1">Не приймається на це заняття</p>
+                              )}
                             </button>
                           )
                         })}
@@ -1124,9 +1153,14 @@ function BookingPage({ lessons, currentClient, plans, onClientLogout, reloadAppD
                         <p className="text-sm text-muted-foreground"><b>Клієнт:</b> {currentClient.name}</p>
                         <p className="text-sm text-muted-foreground"><b>Email:</b> {currentClient.email}</p>
                       </div>
-                      <Button onClick={handleBookWithSub} disabled={isProcessing} variant="brand" className="w-full h-11 text-base">
-                        {isProcessing ? 'Записуємо...' : 'Підтвердити запис (абонемент)'}
+                      <Button onClick={handleBookWithSub} disabled={isProcessing || noEligible} variant="brand" className="w-full h-11 text-base">
+                        {isProcessing ? 'Записуємо...' : noEligible ? 'Немає сумісного абонементу' : 'Підтвердити запис (абонемент)'}
                       </Button>
+                      {noEligible && (
+                        <p className="text-xs text-muted-foreground text-center -mt-2">
+                          Поверніться назад і оберіть «Одноразовий візит».
+                        </p>
+                      )}
                     </>
                   )
                 })()}
@@ -1249,6 +1283,7 @@ function CancelBookingPage({ reloadAppData }: { reloadAppData: () => Promise<voi
           booked_count: raw.booked_count,
           status: raw.status as LessonStatus,
           single_visit_price: raw.single_visit_price,
+          accepts_certificates: true,
           is_booked_by_me: raw.is_booked_by_me,
           my_booking_email: raw.my_booking_email,
           my_booking_name: raw.my_booking_name,
@@ -3864,6 +3899,7 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
   const [newLessonTime, setNewLessonTime] = useState('18:00')
   const [newLessonDuration, setNewLessonDuration] = useState('80')
   const [newLessonPrice, setNewLessonPrice] = useState('300')
+  const [newLessonAcceptsCertificates, setNewLessonAcceptsCertificates] = useState(true)
 
   const [editingLesson, setEditingLesson] = useState<ActualLesson | null>(null)
   const [editLessonName, setEditLessonName] = useState('')
@@ -3871,6 +3907,7 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
   const [editLessonTime, setEditLessonTime] = useState('')
   const [editLessonDuration, setEditLessonDuration] = useState('80')
   const [editLessonPrice, setEditLessonPrice] = useState('300')
+  const [editLessonAcceptsCertificates, setEditLessonAcceptsCertificates] = useState(true)
 
   const actDate = selectedDate || new Date()
   const weekStart = startOfWeek(actDate, { weekStartsOn: 1 })
@@ -3896,11 +3933,13 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
       booked_count: 0,
       status: 'SCHEDULED',
       single_visit_price: price,
+      accepts_certificates: newLessonAcceptsCertificates,
     }
     setLessons(prev => [...prev, optimistic])
     setIsAddLessonOpen(false)
     setNewLessonPrice('300')
     setNewLessonDuration('80')
+    setNewLessonAcceptsCertificates(true)
     void (async () => {
       try {
         await studioApi.createLessonOnServer({
@@ -3912,6 +3951,7 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
           capacity: optimistic.capacity,
           status: 'SCHEDULED',
           single_visit_price: price,
+          accepts_certificates: optimistic.accepts_certificates,
         })
         await reloadAppData()
       } catch (err) {
@@ -3933,6 +3973,7 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
     )
     setEditLessonDuration(String(minutes))
     setEditLessonPrice(String(l.single_visit_price ?? 300))
+    setEditLessonAcceptsCertificates(l.accepts_certificates ?? true)
   }
 
   const handleEditLesson = (e: React.FormEvent) => {
@@ -3950,6 +3991,7 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
       start_timestamp: start,
       end_timestamp: end,
       single_visit_price: price,
+      accepts_certificates: editLessonAcceptsCertificates,
     }
     setLessons(prev => prev.map(l => l.id === original.id ? { ...l, ...updates } : l))
     setEditingLesson(null)
@@ -3961,6 +4003,7 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
           start_timestamp: start.toISOString(),
           end_timestamp: end.toISOString(),
           single_visit_price: price,
+          accepts_certificates: editLessonAcceptsCertificates,
         })
         await reloadAppData()
       } catch (err) {
@@ -4211,6 +4254,18 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
               <label className="text-sm font-medium">Ціна разового відвідування (₴)</label>
               <input required type="number" min="0" step="1" value={newLessonPrice} onChange={e=>setNewLessonPrice(e.target.value)} className={inputClasses} />
             </div>
+            <label className="flex items-start gap-3 rounded-lg border border-border bg-muted/40 p-3 cursor-pointer hover:border-brand-gold/40 transition-colors">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 accent-brand-gold"
+                checked={newLessonAcceptsCertificates}
+                onChange={e=>setNewLessonAcceptsCertificates(e.target.checked)}
+              />
+              <span className="text-sm">
+                <span className="font-medium text-foreground">Приймає сертифікати / подарункові абонементи</span>
+                <span className="block text-xs text-muted-foreground mt-0.5">Зніміть, якщо це заняття не входить до сертифікатних планів — клієнти не зможуть списати з подарункового абонементу.</span>
+              </span>
+            </label>
             <Button type="submit" variant="brand" className="w-full">Створити заняття</Button>
           </form>
         </DialogContent>
@@ -4260,6 +4315,18 @@ function AdminSchedulePage({ lessons, clients, trainers, classTypes, reloadAppDa
                 <label className="text-sm font-medium">Ціна разового відвідування (₴)</label>
                 <input required type="number" min="0" step="1" value={editLessonPrice} onChange={e=>setEditLessonPrice(e.target.value)} className={inputClasses} />
               </div>
+              <label className="flex items-start gap-3 rounded-lg border border-border bg-muted/40 p-3 cursor-pointer hover:border-brand-gold/40 transition-colors">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4 accent-brand-gold"
+                  checked={editLessonAcceptsCertificates}
+                  onChange={e=>setEditLessonAcceptsCertificates(e.target.checked)}
+                />
+                <span className="text-sm">
+                  <span className="font-medium text-foreground">Приймає сертифікати / подарункові абонементи</span>
+                  <span className="block text-xs text-muted-foreground mt-0.5">Зніміть, якщо це заняття не входить до сертифікатних планів.</span>
+                </span>
+              </label>
               <Button type="submit" variant="brand" className="w-full">Зберегти зміни</Button>
             </form>
           )}
@@ -4471,6 +4538,7 @@ export default function App() {
           booked_count: l.booked_count,
           status: l.status as LessonStatus,
           single_visit_price: l.single_visit_price,
+          accepts_certificates: l.accepts_certificates ?? true,
         }))
       )
       setClients(data.clients as Client[])
