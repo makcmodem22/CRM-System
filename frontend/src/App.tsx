@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, Fragment } from 'react'
 import { BrowserRouter, Routes, Route, useNavigate, useParams, Link, Outlet, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, addDays, startOfMonth } from 'date-fns'
@@ -3342,11 +3342,12 @@ function SocialMediaPoster({ lessons, weekStart, weekEnd }: { lessons: ActualLes
 }
 
 // ── Page: Admin Stats (Trainer Salary & Analytics) ──────────────────────────
-function AdminStatsPage({ lessons, clients, trainers, plans }: {
+function AdminStatsPage({ lessons, clients, trainers, plans, reloadAppData }: {
   lessons: ActualLesson[],
   clients: Client[],
   trainers: string[],
-  plans: SubscriptionPlan[]
+  plans: SubscriptionPlan[],
+  reloadAppData: () => Promise<void>
 }) {
   const navigate = useNavigate()
   const [selectedMonth, setSelectedMonth] = useState(() => format(new Date(), 'yyyy-MM'))
@@ -3356,6 +3357,31 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
     return y
   })
   const [expandedTrainer, setExpandedTrainer] = useState<string | null>(null)
+  // Per-lesson signups drill-down: which lesson row is open + a cache of its fetched roster.
+  const [expandedLessonId, setExpandedLessonId] = useState<string | null>(null)
+  const [signupCache, setSignupCache] = useState<Record<string, { rows?: studioApi.LessonSignup[]; error?: string }>>({})
+  const [loadingLessonId, setLoadingLessonId] = useState<string | null>(null)
+  // Clicking a client in the roster opens their full profile dialog (same as the schedule page).
+  const [detailClientId, setDetailClientId] = useState<string | null>(null)
+  const detailClient = useMemo(
+    () => (detailClientId ? clients.find(c => c.id === detailClientId) ?? null : null),
+    [clients, detailClientId],
+  )
+
+  // Toggle a lesson's roster open/closed, fetching it once on first open and caching the result.
+  // The fetch is fired imperatively from the click — NOT from an effect keyed on loadingLessonId —
+  // because updating loadingLessonId inside such an effect re-triggers it, runs the cleanup, and
+  // cancels the very request it started, leaving the row stuck on "Завантаження…" forever.
+  const toggleLessonSignups = useCallback((lessonId: string) => {
+    if (expandedLessonId === lessonId) { setExpandedLessonId(null); return }
+    setExpandedLessonId(lessonId)
+    if (signupCache[lessonId] || loadingLessonId === lessonId) return
+    setLoadingLessonId(lessonId)
+    studioApi.fetchLessonSignups(lessonId)
+      .then(rows => setSignupCache(c => ({ ...c, [lessonId]: { rows } })))
+      .catch(err => setSignupCache(c => ({ ...c, [lessonId]: { error: err instanceof Error ? err.message : 'Помилка завантаження' } })))
+      .finally(() => setLoadingLessonId(cur => (cur === lessonId ? null : cur)))
+  }, [expandedLessonId, signupCache, loadingLessonId])
 
   // Parse selected month range
   const monthStart = useMemo(() => {
@@ -3367,9 +3393,12 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
     return new Date(y, m, 0, 23, 59, 59)
   }, [selectedMonth])
 
-  // Filter lessons for the selected month that were booked (booked_count > 0)
+  // Lessons for the selected month, excluding cancelled trainings: a cancelled lesson
+  // generates no income (clients are refunded), so it must not count toward trainer/admin
+  // payouts, booking totals, or lesson totals.
   const monthLessons = useMemo(() => {
     return lessons.filter(l => {
+      if (l.status === 'CANCELLED') return false
       const t = l.start_timestamp.getTime()
       return t >= monthStart.getTime() && t <= monthEnd.getTime()
     })
@@ -3726,7 +3755,7 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
                         isExpanded ? "bg-brand-gold/10" : "hover:bg-muted/60",
                         !hasData && "opacity-50"
                       )}
-                      onClick={() => setExpandedTrainer(isExpanded ? null : stats.trainerName)}
+                      onClick={() => { setExpandedTrainer(isExpanded ? null : stats.trainerName); setExpandedLessonId(null) }}
                     >
                       <div className="flex items-center gap-4">
                         {/* Avatar */}
@@ -3828,9 +3857,29 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
                                     </tr>
                                   </thead>
                                   <tbody className="bg-card divide-y divide-border">
-                                    {stats.lessonDetails.map(detail => (
-                                      <tr key={detail.lessonId} className="hover:bg-muted/40 transition-colors">
-                                        <td className="p-3 font-semibold text-foreground">{detail.className}</td>
+                                    {stats.lessonDetails.map(detail => {
+                                      const canExpand = detail.bookedCount > 0
+                                      const isLessonExpanded = expandedLessonId === detail.lessonId
+                                      const cached = signupCache[detail.lessonId]
+                                      const isLoadingSignups = loadingLessonId === detail.lessonId
+                                      return (
+                                      <Fragment key={detail.lessonId}>
+                                      <tr
+                                        className={cn(
+                                          "transition-colors",
+                                          canExpand ? "cursor-pointer hover:bg-muted/40" : "opacity-80",
+                                          isLessonExpanded && "bg-brand-gold/10",
+                                        )}
+                                        onClick={canExpand ? () => toggleLessonSignups(detail.lessonId) : undefined}
+                                      >
+                                        <td className="p-3 font-semibold text-foreground">
+                                          <span className="flex items-center gap-1.5">
+                                            {canExpand && (
+                                              <ChevronRight className={cn("w-3.5 h-3.5 text-muted-foreground transition-transform shrink-0", isLessonExpanded && "rotate-90 text-brand-gold")} />
+                                            )}
+                                            {detail.className}
+                                          </span>
+                                        </td>
                                         <td className="p-3 text-center text-muted-foreground text-xs">{format(detail.date, 'dd.MM HH:mm')}</td>
                                         <td className="p-3 text-center">
                                           <Badge variant="outline" className="text-[10px]">{detail.bookedCount}</Badge>
@@ -3838,7 +3887,90 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
                                         <td className="p-3 text-right font-bold text-brand-gold">{Math.round(detail.trainerShare)}₴</td>
                                         <td className="p-3 text-right font-bold text-brand-gold">{Math.round(detail.adminShare)}₴</td>
                                       </tr>
-                                    ))}
+                                      {isLessonExpanded && (
+                                        <tr className="bg-muted/30">
+                                          <td colSpan={5} className="p-3">
+                                            {isLoadingSignups ? (
+                                              <p className="text-xs text-muted-foreground py-2 text-center">Завантаження…</p>
+                                            ) : cached?.error ? (
+                                              <div className="py-2 px-3 rounded-md bg-red-950/40 border border-red-500/25 text-xs text-red-200">{cached.error}</div>
+                                            ) : !cached?.rows || cached.rows.length === 0 ? (
+                                              <p className="text-xs text-muted-foreground py-2 text-center">Немає записаних</p>
+                                            ) : (
+                                              <div className="space-y-1.5">
+                                                {cached.rows.map(s => {
+                                                  const linked = findClientForSignup(s, clients)
+                                                  const linkedSub = s.subscription_id && linked
+                                                    ? linked.subscriptions.find(sub => sub.id === s.subscription_id)
+                                                    : undefined
+                                                  const planName = linkedSub?.plan_name
+                                                  const isPending = s.status === 'PENDING_PAYMENT'
+                                                  const isPayAtStudio = s.pay_at_studio === true && !isPending
+                                                  // Prefer the explicit kind on the booking; fall back to the linked subscription's type.
+                                                  const subKind: 'gift' | 'paid' | null =
+                                                    s.subscription_kind === 'gift' ? 'gift'
+                                                    : s.subscription_kind === 'paid' ? 'paid'
+                                                    : linkedSub ? (isGiftLikeSubscription(linkedSub) ? 'gift' : 'paid')
+                                                    : null
+                                                  const kindLabel = isPayAtStudio ? 'Оплата на місці'
+                                                    : subKind === 'gift' ? 'Сертифікат'
+                                                    : subKind === 'paid' ? 'Абонемент'
+                                                    : 'Разово'
+                                                  const kindColor = isPayAtStudio ? 'bg-emerald-500/20 text-emerald-200'
+                                                    : subKind === 'gift' ? 'bg-purple-500/20 text-purple-200'
+                                                    : subKind === 'paid' ? 'bg-brand-gold/20 text-brand-gold'
+                                                    : 'bg-white/10 text-muted-foreground'
+                                                  return (
+                                                    <button
+                                                      key={s.bookingId}
+                                                      type="button"
+                                                      disabled={!linked}
+                                                      onClick={(e) => { e.stopPropagation(); if (linked) setDetailClientId(linked.id) }}
+                                                      className={cn(
+                                                      "w-full text-left flex items-center gap-3 px-3 py-2 rounded-md border transition-colors",
+                                                      isPending ? "border-amber-500/30 bg-amber-950/15"
+                                                        : isPayAtStudio ? "border-emerald-500/30 bg-emerald-950/15"
+                                                        : "border-white/[0.06] bg-card",
+                                                      linked ? "hover:bg-muted/50 hover:border-brand-gold/40 cursor-pointer" : "cursor-default",
+                                                    )}>
+                                                      <div className={cn(
+                                                        "w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ring-1 shrink-0",
+                                                        isPending ? "bg-amber-500/15 text-amber-300 ring-amber-500/30"
+                                                          : isPayAtStudio ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30"
+                                                          : "bg-brand-gold/15 text-brand-gold ring-brand-gold/25",
+                                                      )}>
+                                                        {(s.name || s.email || '?').slice(0, 1).toUpperCase()}
+                                                      </div>
+                                                      <div className="flex-1 min-w-0">
+                                                        <p className="font-semibold text-xs text-foreground truncate">{s.name || '—'}</p>
+                                                        <p className="text-[11px] text-muted-foreground truncate">
+                                                          {s.email}{planName ? ` · ${planName}` : ''}
+                                                        </p>
+                                                      </div>
+                                                      <div className="flex flex-col items-end gap-1 shrink-0">
+                                                        {isPending ? (
+                                                          <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200">Очікує оплати</span>
+                                                        ) : (
+                                                          <span className={cn("text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded", kindColor)}>{kindLabel}</span>
+                                                        )}
+                                                        {isPayAtStudio && s.pay_amount != null && s.pay_amount > 0 && (
+                                                          <span className="text-[10px] font-semibold text-emerald-200 tabular-nums">{s.pay_amount}₴</span>
+                                                        )}
+                                                        {!s.client_user_id && !linked && (
+                                                          <span className="text-[9px] text-muted-foreground/70 uppercase">Гість</span>
+                                                        )}
+                                                      </div>
+                                                    </button>
+                                                  )
+                                                })}
+                                              </div>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      )}
+                                      </Fragment>
+                                      )
+                                    })}
                                   </tbody>
                                 </table>
                               </div>
@@ -3854,6 +3986,14 @@ function AdminStatsPage({ lessons, clients, trainers, plans }: {
           )}
         </CardContent>
       </Card>
+
+      <ClientDetailDialog
+        open={!!detailClient}
+        client={detailClient}
+        lessons={lessons}
+        onOpenChange={(o) => { if (!o) setDetailClientId(null) }}
+        adminControls={{ onGranted: reloadAppData }}
+      />
     </div>
   )
 }
@@ -4639,7 +4779,7 @@ export default function App() {
           <Route path="schedule" element={<AdminSchedulePage lessons={lessons} clients={clients} trainers={trainers} classTypes={classTypes} reloadAppData={reloadAppData} setLessons={setLessons} />} />
           <Route path="clients" element={<AdminClientsPage clients={clients} lessons={lessons} reloadAppData={reloadAppData} />} />
           <Route path="settings" element={<AdminSettingsPage trainers={trainers} classTypes={classTypes} plans={plans} promoCodes={promoCodes} reloadAppData={reloadAppData} />} />
-          <Route path="stats" element={<AdminStatsPage lessons={lessons} clients={clients} trainers={trainers} plans={plans} />} />
+          <Route path="stats" element={<AdminStatsPage lessons={lessons} clients={clients} trainers={trainers} plans={plans} reloadAppData={reloadAppData} />} />
         </Route>
       </Routes>
     </BrowserRouter>
