@@ -24,6 +24,7 @@ import { Popover, PopoverContent, PopoverTrigger } from './components/ui/popover
 import { cn } from './lib/utils'
 import { supabase } from './lib/supabase'
 import * as studioApi from './lib/studioApi'
+import { BUSINESS_INFO } from './lib/businessInfo'
 import logoImg from './assets/logo.png'
 
 const logoSrc = typeof logoImg === 'string' ? logoImg : logoImg.src
@@ -131,16 +132,6 @@ const DEFAULT_PLANS: SubscriptionPlan[] = [
   { id: 'plan_8', name: 'Абонемент на 8 занять', sessions: 8, price: 1800, duration_days: 30 },
   { id: 'plan_15', name: 'Абонемент на 15 занять', sessions: 15, price: 3000, duration_days: 30 },
 ]
-
-/** Public-facing legal / contact info. Rendered in the site footer and on the offer / refund pages so LiqPay verification can find it. */
-const BUSINESS_INFO = {
-  name: 'Brave.Yoga',
-  addressLine: 'вул. Соборна, 17, м. Рівне, Україна',
-  phone: '+380 97 902 6363',
-  phoneHref: '+380979026363',
-  email: 'Katya.sardyga@gmail.com',
-  servicesCategory: 'Надання послуг у сфері здоров’я та оздоровчих практик',
-} as const
 
 const inputClasses = "flex h-10 w-full rounded-md border border-white/10 bg-muted/45 px-3 py-2 text-sm text-foreground ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-gold/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
 
@@ -365,6 +356,10 @@ function SiteFooter() {
             <span className="font-bold text-foreground tracking-tight">{BUSINESS_INFO.name}</span>
           </div>
           <p className="text-muted-foreground leading-relaxed">{BUSINESS_INFO.servicesCategory}.</p>
+          <p className="text-muted-foreground/80 leading-relaxed mt-3 text-xs">
+            {BUSINESS_INFO.legalName}<br />
+            {BUSINESS_INFO.registrationLabel}: {BUSINESS_INFO.registrationCode}
+          </p>
         </div>
 
         <div>
@@ -393,14 +388,19 @@ function SiteFooter() {
           <h3 className="text-xs font-bold text-brand-gold uppercase tracking-[0.15em] mb-3">Інформація</h3>
           <ul className="space-y-2 text-muted-foreground">
             <li>
-              <Link to="/offer" className="hover:text-brand-gold transition-colors inline-flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5" /> Публічна оферта
-              </Link>
+              <a href="/about" className="hover:text-brand-gold transition-colors inline-flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5" /> Про компанію
+              </a>
             </li>
             <li>
-              <Link to="/refunds" className="hover:text-brand-gold transition-colors inline-flex items-center gap-1.5">
+              <a href="/offer" className="hover:text-brand-gold transition-colors inline-flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5" /> Публічна оферта
+              </a>
+            </li>
+            <li>
+              <a href="/refunds" className="hover:text-brand-gold transition-colors inline-flex items-center gap-1.5">
                 <FileText className="w-3.5 h-3.5" /> Умови повернення
-              </Link>
+              </a>
             </li>
           </ul>
         </div>
@@ -1797,192 +1797,6 @@ function ClientDashboardPage({ currentClient, onClientLogout, plans, reloadAppDa
           </div>
         </DialogContent>
       </Dialog>
-    </div>
-  )
-}
-
-// ── Page: Public Offer (Публічний договір оферти) ───────────────────────────
-function PublicOfferPage() {
-  const navigate = useNavigate()
-  return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col">
-      <Header role="CLIENT" />
-      <main className="flex-1 container px-4 sm:px-8 py-10 max-w-4xl">
-        <Button variant="ghost" onClick={() => navigate('/')} className="mb-4 self-start">← На головну</Button>
-
-        <article className="space-y-6">
-          <header className="border-b border-white/[0.07] pb-4">
-            <p className="text-xs font-bold text-brand-gold uppercase tracking-[0.15em]">Юридична інформація</p>
-            <h1 className="text-3xl font-bold tracking-tight mt-2">Публічний договір (оферта)</h1>
-            <p className="text-sm text-muted-foreground mt-1">Про надання послуг у сфері здоров’я та оздоровчих практик</p>
-          </header>
-
-          <section className="rounded-xl border border-white/[0.07] bg-muted/25 p-5 space-y-2">
-            <h2 className="text-xs font-bold text-brand-gold uppercase tracking-[0.12em]">Виконавець</h2>
-            <ul className="text-sm space-y-1.5 mt-2">
-              <li className="flex gap-2"><span className="text-muted-foreground w-32 shrink-0">Назва:</span><span className="font-semibold">{BUSINESS_INFO.name}</span></li>
-              <li className="flex gap-2"><span className="text-muted-foreground w-32 shrink-0">Адреса:</span><span>{BUSINESS_INFO.addressLine}</span></li>
-              <li className="flex gap-2"><span className="text-muted-foreground w-32 shrink-0">Телефон:</span><a href={`tel:${BUSINESS_INFO.phoneHref}`} className="text-foreground hover:text-brand-gold">{BUSINESS_INFO.phone}</a></li>
-              <li className="flex gap-2"><span className="text-muted-foreground w-32 shrink-0">Ел. пошта:</span><a href={`mailto:${BUSINESS_INFO.email}`} className="text-foreground hover:text-brand-gold break-all">{BUSINESS_INFO.email}</a></li>
-              <li className="flex gap-2"><span className="text-muted-foreground w-32 shrink-0">Сфера діяльності:</span><span>{BUSINESS_INFO.servicesCategory}</span></li>
-            </ul>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-lg font-bold">1. Загальні положення</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">1.1. Цей документ є офіційною публічною офертою (далі — «Договір») від {BUSINESS_INFO.name} (далі — «Виконавець») фізичним особам (далі — «Клієнт») щодо надання послуг у сфері здоров’я та оздоровчих практик.</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">1.2. Замовляючи послугу через сайт або здійснюючи оплату, Клієнт повністю та беззастережно приймає умови цього Договору.</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">1.3. Виконавець залишає за собою право вносити зміни до цього Договору. Зміни набирають чинності з моменту їх публікації на сайті.</p>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-lg font-bold">2. Предмет договору</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">2.1. Виконавець надає Клієнту послуги у сфері здоров’я та оздоровчих практик: групові та індивідуальні заняття йогою, стретчингом та іншими оздоровчими практиками згідно з чинним розкладом, опублікованим на сайті.</p>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-lg font-bold">3. Порядок надання послуг</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">3.1. Розклад занять публікується на сайті Виконавця і може оновлюватися.</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">3.2. Клієнт здійснює запис на конкретне заняття через особистий кабінет на сайті.</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">3.3. Один запис надає право на участь в одному занятті відповідно до обраного тарифу — разове відвідування або списання сесії з абонементу.</p>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-lg font-bold">4. Вартість та порядок оплати</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">4.1. Вартість послуг визначається тарифами, що публікуються на сайті, у гривнях України.</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">4.2. Оплата здійснюється безготівково через платіжний сервіс LiqPay банківською карткою або іншими доступними способами.</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">4.3. Послуга вважається оплаченою з моменту зарахування коштів на рахунок Виконавця.</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">4.4. Абонемент діє протягом терміну, зазначеного у момент придбання. Невикористані відвідування після закінчення строку не переносяться.</p>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-lg font-bold">5. Скасування запису та повернення коштів</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">5.1. Клієнт має право скасувати запис на заняття не пізніше ніж за 1 (одну) годину до його початку.</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">5.2. У разі своєчасного скасування:</p>
-            <ul className="text-sm text-muted-foreground leading-relaxed list-disc pl-6 space-y-1">
-              <li>якщо заняття було оплачено окремою оплатою — кошти повертаються у повному обсязі на платіжний інструмент, з якого було здійснено оплату, упродовж до 7 (семи) банківських днів;</li>
-              <li>якщо заняття було оплачено з абонементу — відвідування повертається на абонемент і доступне для повторного використання у межах строку дії абонементу.</li>
-            </ul>
-            <p className="text-sm text-muted-foreground leading-relaxed">5.3. У разі скасування пізніше ніж за 1 годину до початку заняття, або у разі неявки без скасування, кошти за разове відвідування не повертаються, а відвідування з абонементу не повертається.</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">5.4. Якщо заняття не відбулося з вини Виконавця (зокрема через недостатню кількість учасників), відвідування автоматично повертається на абонемент, а кошти за разове відвідування повертаються Клієнту у повному обсязі. Клієнт отримає лист-повідомлення на електронну пошту.</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">5.5. Активований абонемент після часткового використання поверненню не підлягає.</p>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-lg font-bold">6. Права та обов’язки сторін</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">6.1. Виконавець зобов’язаний надати послугу у визначений час та у вказаному місці.</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">6.2. Виконавець має право скасувати заняття у разі надзвичайних обставин або недостатньої кількості учасників, повідомивши Клієнта електронною поштою.</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">6.3. Клієнт зобов’язаний дотримуватись правил поведінки під час занять та інструкцій тренера.</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">6.4. Клієнт зобов’язаний повідомити про наявні протипоказання за станом здоров’я до початку занять.</p>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-lg font-bold">7. Відповідальність сторін</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">7.1. Виконавець не несе відповідальності за стан здоров’я Клієнта під час занять, якщо Клієнт не повідомив про наявні протипоказання або не дотримувався інструкцій тренера.</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">7.2. У всьому, що не врегульовано цим Договором, сторони керуються чинним законодавством України.</p>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-lg font-bold">8. Персональні дані</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">8.1. Виконавець обробляє персональні дані Клієнта (ім’я, контактні дані, історія записів) виключно з метою надання послуг та відповідно до Закону України «Про захист персональних даних».</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">8.2. Дані платіжних карток на сайті не зберігаються; обробку платежів здійснює платіжний сервіс LiqPay.</p>
-          </section>
-
-          <section className="space-y-3 pb-6">
-            <h2 className="text-lg font-bold">9. Реквізити та зв’язок</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">Для будь-яких звернень — повернення коштів, претензій, скарг або питань щодо послуг — звертайтесь до Виконавця:</p>
-            <div className="rounded-xl border border-white/[0.07] bg-muted/25 p-5 text-sm space-y-1.5">
-              <p><span className="text-muted-foreground">Назва:</span> <span className="font-semibold">{BUSINESS_INFO.name}</span></p>
-              <p><span className="text-muted-foreground">Адреса:</span> {BUSINESS_INFO.addressLine}</p>
-              <p><span className="text-muted-foreground">Телефон:</span> <a href={`tel:${BUSINESS_INFO.phoneHref}`} className="text-foreground hover:text-brand-gold">{BUSINESS_INFO.phone}</a></p>
-              <p><span className="text-muted-foreground">Ел. пошта:</span> <a href={`mailto:${BUSINESS_INFO.email}`} className="text-foreground hover:text-brand-gold break-all">{BUSINESS_INFO.email}</a></p>
-            </div>
-          </section>
-        </article>
-      </main>
-      <SiteFooter />
-    </div>
-  )
-}
-
-// ── Page: Refunds (Умови повернення) ────────────────────────────────────────
-function RefundsPage() {
-  const navigate = useNavigate()
-  return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col">
-      <Header role="CLIENT" />
-      <main className="flex-1 container px-4 sm:px-8 py-10 max-w-4xl">
-        <Button variant="ghost" onClick={() => navigate('/')} className="mb-4 self-start">← На головну</Button>
-
-        <article className="space-y-6">
-          <header className="border-b border-white/[0.07] pb-4">
-            <p className="text-xs font-bold text-brand-gold uppercase tracking-[0.15em]">Підтримка клієнтів</p>
-            <h1 className="text-3xl font-bold tracking-tight mt-2">Умови повернення</h1>
-            <p className="text-sm text-muted-foreground mt-1">Як скасувати запис та як ми повертаємо кошти</p>
-          </header>
-
-          <section className="space-y-3">
-            <h2 className="text-lg font-bold">1. Скасування запису на заняття</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">Ви можете скасувати запис на заняття не пізніше ніж <strong className="text-foreground">за 1 (одну) годину до його початку</strong>.</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">Скасувати запис можна у двох способах:</p>
-            <ul className="text-sm text-muted-foreground leading-relaxed list-disc pl-6 space-y-1">
-              <li>в особистому кабінеті на сайті — кнопка «Скасувати» біля відповідного запису;</li>
-              <li>за посиланням з листа-підтвердження, який ми надіслали після успішного запису.</li>
-            </ul>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-lg font-bold">2. Як повертаються кошти</h2>
-
-            <div className="rounded-xl border border-white/[0.07] bg-muted/25 p-5 space-y-2">
-              <h3 className="font-semibold text-foreground">Разові оплати</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">При своєчасному скасуванні кошти повертаються у повному обсязі тим самим способом, яким було здійснено оплату (на банківську картку через LiqPay). Термін повернення — <strong className="text-foreground">до 7 (семи) банківських днів</strong> з моменту скасування.</p>
-            </div>
-
-            <div className="rounded-xl border border-white/[0.07] bg-muted/25 p-5 space-y-2">
-              <h3 className="font-semibold text-foreground">Абонементи</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">При своєчасному скасуванні запису відвідування повертається на ваш абонемент, і його можна використати для запису на інше заняття у межах строку дії абонементу.</p>
-            </div>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-lg font-bold">3. Якщо скасування відбулося пізніше ніж за 1 годину</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">У такому випадку:</p>
-            <ul className="text-sm text-muted-foreground leading-relaxed list-disc pl-6 space-y-1">
-              <li>кошти за разове відвідування не повертаються;</li>
-              <li>відвідування не повертається на абонемент;</li>
-              <li>правило діє також для випадків неявки без скасування.</li>
-            </ul>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-lg font-bold">4. Якщо заняття було скасовано студією</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">Якщо заняття не відбулося з вини студії (наприклад, через недостатню кількість учасників), <strong className="text-foreground">відвідування автоматично повертається на ваш абонемент</strong>, а кошти за разове відвідування повертаються у повному обсязі. Ви отримаєте лист-повідомлення на електронну пошту.</p>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-lg font-bold">5. Які послуги не підлягають поверненню</h2>
-            <ul className="text-sm text-muted-foreground leading-relaxed list-disc pl-6 space-y-1">
-              <li>активований абонемент після його часткового використання — поверненню не підлягає;</li>
-              <li>послуги, які вже були надані (відвідане заняття);</li>
-              <li>невикористані відвідування абонементу після завершення строку його дії;</li>
-              <li>подарункові сертифікати після їх активації або використання.</li>
-            </ul>
-          </section>
-
-          <section className="space-y-3 pb-6">
-            <h2 className="text-lg font-bold">6. Як з нами зв’язатися</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">З будь-яких питань щодо повернення коштів зв’яжіться з нами:</p>
-            <div className="rounded-xl border border-white/[0.07] bg-muted/25 p-5 text-sm space-y-1.5">
-              <p className="flex items-start gap-2"><Mail className="w-4 h-4 text-brand-gold shrink-0 mt-0.5" /><a href={`mailto:${BUSINESS_INFO.email}`} className="text-foreground hover:text-brand-gold break-all">{BUSINESS_INFO.email}</a></p>
-              <p className="flex items-start gap-2"><Phone className="w-4 h-4 text-brand-gold shrink-0 mt-0.5" /><a href={`tel:${BUSINESS_INFO.phoneHref}`} className="text-foreground hover:text-brand-gold">{BUSINESS_INFO.phone}</a></p>
-              <p className="flex items-start gap-2"><MapPin className="w-4 h-4 text-brand-gold shrink-0 mt-0.5" />{BUSINESS_INFO.addressLine}</p>
-            </div>
-            <p className="text-xs text-muted-foreground/80 mt-2">Ми відповідаємо на запити протягом 1–2 робочих днів.</p>
-          </section>
-        </article>
-      </main>
-      <SiteFooter />
     </div>
   )
 }
@@ -4528,8 +4342,6 @@ export default function App() {
   const pathname = typeof window !== 'undefined' ? window.location.pathname : '/'
   const isStandaloneRoute =
     pathname === '/auth' ||
-    pathname.startsWith('/offer') ||
-    pathname.startsWith('/refunds') ||
     pathname.startsWith('/cancel') ||
     pathname.startsWith('/payment/')
 
@@ -4561,8 +4373,6 @@ export default function App() {
         <Route path="/cancel/:id" element={<CancelBookingPage reloadAppData={reloadAppData} />} />
         <Route path="/auth" element={<AuthPage setCurrentClientId={setCurrentClientId} reloadAppData={reloadAppData} />} />
         <Route path="/dashboard" element={<ClientDashboardPage currentClient={currentClient} onClientLogout={handleClientLogout} plans={plans} reloadAppData={reloadAppData} />} />
-        <Route path="/offer" element={<PublicOfferPage />} />
-        <Route path="/refunds" element={<RefundsPage />} />
         <Route path="/payment/result" element={<PaymentResultPage reloadAppData={reloadAppData} />} />
 
         {/* Admin Section */}

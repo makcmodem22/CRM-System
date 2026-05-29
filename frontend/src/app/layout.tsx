@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import type { ReactNode } from 'react'
+import { BUSINESS_INFO } from '@/lib/businessInfo'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -31,7 +32,30 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        {/* Static fallback for crawlers / payment-provider verifiers that don't run JS:
+            the SPA renders client-side only, so without this the homepage HTML carries no
+            company data. Hidden once JS hydrates the app. */}
+        <noscript>
+          <div style={{ maxWidth: '48rem', margin: '0 auto', padding: '2.5rem 1rem', fontFamily: 'system-ui, sans-serif' }}>
+            <h1>{BUSINESS_INFO.name}</h1>
+            <p>{BUSINESS_INFO.servicesCategory}.</p>
+            <p>
+              {BUSINESS_INFO.legalName}<br />
+              {BUSINESS_INFO.registrationLabel}: {BUSINESS_INFO.registrationCode}
+            </p>
+            <p>
+              {BUSINESS_INFO.addressLine}<br />
+              <a href={`tel:${BUSINESS_INFO.phoneHref}`}>{BUSINESS_INFO.phone}</a><br />
+              <a href={`mailto:${BUSINESS_INFO.email}`}>{BUSINESS_INFO.email}</a>
+            </p>
+            <p>
+              <a href="/about">Про компанію</a> · <a href="/offer">Публічна оферта</a> · <a href="/refunds">Умови повернення</a>
+            </p>
+          </div>
+        </noscript>
+      </body>
     </html>
   )
 }
