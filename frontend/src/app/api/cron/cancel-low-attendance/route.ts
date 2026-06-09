@@ -3,7 +3,7 @@ import nodemailer from 'nodemailer'
 import { constantTimeEqual } from '@/lib/admin-crypto'
 import { escapeHtml } from '@/lib/html-escape'
 import { fmtTime } from '@/lib/mailer'
-import { autoCancelLowAttendanceLessons } from '@/lib/studio-logic'
+import { autoCancelLowAttendanceLessons, type AutoCancelRefundKind } from '@/lib/studio-logic'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,12 +14,30 @@ function authorized(req: Request) {
   return constantTimeEqual(header, `Bearer ${secret}`)
 }
 
-async function sendCancellationEmail(to: string, name: string, className: string, startTimestamp: Date) {
+function refundLine(refundKind: AutoCancelRefundKind): string {
+  switch (refundKind) {
+    case 'money':
+      return 'Повну суму буде повернуто на вашу картку протягом кількох робочих днів.'
+    case 'certificate':
+      return 'Заняття повернуто на ваш абонемент.'
+    case 'none':
+      return ''
+  }
+}
+
+async function sendCancellationEmail(
+  to: string,
+  name: string,
+  className: string,
+  startTimestamp: Date,
+  refundKind: AutoCancelRefundKind,
+) {
   const user = process.env.SMTP_EMAIL
   const pass = process.env.SMTP_PASSWORD
   if (!user || !pass) return
   const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user, pass } })
   const startTime = fmtTime(startTimestamp)
+  const refund = refundLine(refundKind)
   await transporter.sendMail({
     from: `"Brave! Yoga" <${user}>`,
     to,
@@ -29,7 +47,7 @@ async function sendCancellationEmail(to: string, name: string, className: string
         <h2 style="text-align:center;">Заняття скасовано</h2>
         <p style="text-align:center;">Привіт, ${escapeHtml(name || 'Гість')}! На жаль, заняття скасовано через недостатню кількість учасників.</p>
         <p style="text-align:center;"><b>${escapeHtml(className)}</b><br/>${escapeHtml(startTime)}</p>
-        <p style="text-align:center; color:#64748B;">Сесію повернуто на ваш абонемент (якщо застосовно).</p>
+        ${refund ? `<p style="text-align:center; color:#64748B;">${escapeHtml(refund)}</p>` : ''}
       </div>
     `,
   })
@@ -40,12 +58,13 @@ async function run(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   try {
-    const cancelled = await autoCancelLowAttendanceLessons(1)
+    // Studio rule: cancel an under-booked class 2 hours before it starts.
+    const cancelled = await autoCancelLowAttendanceLessons(2)
     let emailsSent = 0
     for (const lesson of cancelled) {
       for (const recipient of lesson.notifyEmails) {
         try {
-          await sendCancellationEmail(recipient.email, recipient.name, lesson.class_name, lesson.start_timestamp)
+          await sendCancellationEmail(recipient.email, recipient.name, lesson.class_name, lesson.start_timestamp, recipient.refundKind)
           emailsSent++
         } catch (err) {
           console.error('Auto-cancel email failed', { lessonId: lesson.id, email: recipient.email, err })
