@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto'
 import { Prisma } from '@prisma/client'
 import type { PrismaClient } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { requestRefund } from '@/lib/liqpay'
 
 export const DEFAULT_PLANS = [
   { id: 'plan_4', name: 'Абонемент на 4 заняття', sessions: 4, price: 1000, duration_days: 30 },
@@ -1149,7 +1150,61 @@ export async function cancelOwnedBookingRow(
   })
 }
 
-export async function autoCancelLowAttendanceLessons(windowHours = 1) {
+/** How each registrant on an auto-cancelled lesson was made whole. Drives the email copy. */
+export type AutoCancelRefundKind = 'money' | 'certificate' | 'none'
+
+export type AutoCancelNotify = { email: string; name: string; refundKind: AutoCancelRefundKind }
+
+export type AutoCancelledLesson = {
+  id: string
+  class_name: string
+  trainer_name: string
+  start_timestamp: Date
+  notifyEmails: AutoCancelNotify[]
+}
+
+/**
+ * Reverse a settled single-visit LiqPay payment and mark it REFUNDED. The LiqPay call is an
+ * external HTTP request, so this must run OUTSIDE any Prisma transaction. Idempotent at the
+ * payment level: the REFUNDED flip is conditional on the row still being SUCCESS, so a second
+ * call (or a re-run) is a no-op. Returns false — and leaves the row SUCCESS for manual
+ * follow-up — when LiqPay rejects the reversal.
+ */
+async function refundSingleVisitPayment(args: { paymentId: string; orderId: string; amount: number }): Promise<boolean> {
+  const result = await requestRefund({ orderId: args.orderId, amount: args.amount })
+  if (!result.ok) {
+    console.error('Auto-cancel refund rejected by LiqPay', {
+      paymentId: args.paymentId,
+      orderId: args.orderId,
+      status: result.status,
+      raw: result.raw,
+    })
+    return false
+  }
+  await prisma.studioPayment.updateMany({
+    where: { id: args.paymentId, status: 'SUCCESS' },
+    data: { status: 'REFUNDED', refunded_at: new Date() },
+  })
+  return true
+}
+
+/**
+ * Cancel every SCHEDULED lesson that starts within `windowHours` and has at most one registrant,
+ * refund each registrant in full, and return the per-lesson recipient list so the caller can email
+ * them. The studio's rule is "cancel an under-booked class 2 hours before it starts", so the cron
+ * passes a 2-hour window.
+ *
+ * Refunds, by how the slot was paid for:
+ *   - money (single_visit paid via LiqPay) → a LiqPay reversal is requested and the StudioPayment
+ *     is marked REFUNDED. Done AFTER the DB transaction commits, since it is a network call.
+ *   - certificate / subscription → the consumed session is returned to the plan (used_sessions − 1),
+ *     done atomically inside the transaction.
+ *   - pay-at-studio / unpaid → nothing to refund.
+ *
+ * The atomic SCHEDULED→CANCELLED flip is the idempotency guard: an already-cancelled lesson can
+ * never be re-selected, so no booking is refunded twice even if two cron ticks overlap.
+ */
+export async function autoCancelLowAttendanceLessons(windowHours = 2): Promise<AutoCancelledLesson[]> {
   const now = new Date()
   const cutoff = new Date(now.getTime() + windowHours * 60 * 60 * 1000)
   const candidates = await prisma.publicLesson.findMany({
@@ -1160,17 +1215,14 @@ export async function autoCancelLowAttendanceLessons(windowHours = 1) {
     },
   })
 
-  const cancelled: Array<{
-    id: string
-    class_name: string
-    trainer_name: string
-    start_timestamp: Date
-    notifyEmails: Array<{ email: string; name: string }>
-  }> = []
+  const cancelled: AutoCancelledLesson[] = []
 
   for (const lesson of candidates) {
     try {
-      const notifyEmails: Array<{ email: string; name: string }> = []
+      const notifyEmails: AutoCancelNotify[] = []
+      // Captured inside the transaction, settled after it commits (requestRefund hits the network).
+      const moneyRefunds: Array<{ paymentId: string; orderId: string; amount: number }> = []
+
       const committed = await prisma.$transaction(async tx => {
         const flipped = await tx.publicLesson.updateMany({
           where: { id: lesson.id, status: 'SCHEDULED', booked_count: { lte: 1 } },
@@ -1181,7 +1233,21 @@ export async function autoCancelLowAttendanceLessons(windowHours = 1) {
         const bookings = await tx.publicLessonBooking.findMany({ where: { lesson_id: lesson.id } })
         for (const booking of bookings) {
           const meta = (booking.meta || {}) as ClientBookingMeta
-          if (meta.subscription_id && booking.client_user_id) {
+          let refundKind: AutoCancelRefundKind = 'none'
+
+          // A booking is paid EITHER with money (a single_visit StudioPayment) OR a subscription —
+          // never both. Check money first so a real card charge always wins the refund path.
+          const paidVisit = await tx.studioPayment.findFirst({
+            where: { booking_id: booking.id, purpose: 'single_visit', status: 'SUCCESS' },
+          })
+          if (paidVisit) {
+            refundKind = 'money'
+            moneyRefunds.push({
+              paymentId: paidVisit.id,
+              orderId: paidVisit.liqpay_order_id,
+              amount: paidVisit.amount,
+            })
+          } else if (meta.subscription_id && booking.client_user_id) {
             const client = await tx.studioClient.findUnique({ where: { id: booking.client_user_id } })
             if (client) {
               const subs = ((client.subscriptions_json as unknown as ClientSub[]) || []).map(s =>
@@ -1194,21 +1260,34 @@ export async function autoCancelLowAttendanceLessons(windowHours = 1) {
                 data: { subscriptions_json: subs as Prisma.InputJsonValue },
               })
             }
+            refundKind = 'certificate'
           }
+
           await tx.publicLessonBooking.delete({ where: { id: booking.id } })
-          notifyEmails.push({ email: booking.client_email, name: booking.client_name })
+          notifyEmails.push({ email: booking.client_email, name: booking.client_name, refundKind })
         }
         return true
       })
-      if (committed) {
-        cancelled.push({
-          id: lesson.id,
-          class_name: lesson.class_name,
-          trainer_name: lesson.trainer_name,
-          start_timestamp: lesson.start_timestamp,
-          notifyEmails,
-        })
+
+      if (!committed) continue
+
+      // Settle money refunds now that the cancel is durable. A LiqPay failure is logged (the row
+      // stays SUCCESS for manual handling) but never blocks the remaining refunds or the emails.
+      for (const r of moneyRefunds) {
+        try {
+          await refundSingleVisitPayment(r)
+        } catch (err) {
+          console.error('Auto-cancel refund call failed', { paymentId: r.paymentId, orderId: r.orderId, err })
+        }
       }
+
+      cancelled.push({
+        id: lesson.id,
+        class_name: lesson.class_name,
+        trainer_name: lesson.trainer_name,
+        start_timestamp: lesson.start_timestamp,
+        notifyEmails,
+      })
     } catch (err) {
       console.error('Auto-cancel: lesson failed, continuing', { lessonId: lesson.id, err })
     }
