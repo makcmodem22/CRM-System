@@ -58,8 +58,8 @@ async function run(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   try {
-    // Studio rule: cancel an under-booked class 2 hours before it starts.
-    const cancelled = await autoCancelLowAttendanceLessons(2)
+    // Studio rule: cancel an under-booked class 1 hour before it starts.
+    const cancelled = await autoCancelLowAttendanceLessons(1)
     let emailsSent = 0
     for (const lesson of cancelled) {
       for (const recipient of lesson.notifyEmails) {

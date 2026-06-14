@@ -1191,8 +1191,8 @@ async function refundSingleVisitPayment(args: { paymentId: string; orderId: stri
 /**
  * Cancel every SCHEDULED lesson that starts within `windowHours` and has at most one registrant,
  * refund each registrant in full, and return the per-lesson recipient list so the caller can email
- * them. The studio's rule is "cancel an under-booked class 2 hours before it starts", so the cron
- * passes a 2-hour window.
+ * them. The studio's rule is "cancel an under-booked class 1 hour before it starts", so the cron
+ * passes a 1-hour window.
  *
  * Refunds, by how the slot was paid for:
  *   - money (single_visit paid via LiqPay) → a LiqPay reversal is requested and the StudioPayment
@@ -1204,7 +1204,7 @@ async function refundSingleVisitPayment(args: { paymentId: string; orderId: stri
  * The atomic SCHEDULED→CANCELLED flip is the idempotency guard: an already-cancelled lesson can
  * never be re-selected, so no booking is refunded twice even if two cron ticks overlap.
  */
-export async function autoCancelLowAttendanceLessons(windowHours = 2): Promise<AutoCancelledLesson[]> {
+export async function autoCancelLowAttendanceLessons(windowHours = 1): Promise<AutoCancelledLesson[]> {
   const now = new Date()
   const cutoff = new Date(now.getTime() + windowHours * 60 * 60 * 1000)
   const candidates = await prisma.publicLesson.findMany({
