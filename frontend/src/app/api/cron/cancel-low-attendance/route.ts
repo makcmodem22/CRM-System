@@ -34,7 +34,7 @@ async function sendCancellationEmail(
 ) {
   const user = process.env.SMTP_EMAIL
   const pass = process.env.SMTP_PASSWORD
-  if (!user || !pass) return
+  if (!user || !pass) throw new Error('SMTP_EMAIL / SMTP_PASSWORD not configured')
   const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user, pass } })
   const startTime = fmtTime(startTimestamp)
   const refund = refundLine(refundKind)
@@ -61,22 +61,32 @@ async function run(req: Request) {
     // Studio rule: cancel an under-booked class 2 hours before it starts.
     const cancelled = await autoCancelLowAttendanceLessons(2)
     let emailsSent = 0
+    let emailsFailed = 0
     for (const lesson of cancelled) {
       for (const recipient of lesson.notifyEmails) {
         try {
           await sendCancellationEmail(recipient.email, recipient.name, lesson.class_name, lesson.start_timestamp, recipient.refundKind)
           emailsSent++
         } catch (err) {
+          emailsFailed++
           console.error('Auto-cancel email failed', { lessonId: lesson.id, email: recipient.email, err })
         }
       }
     }
-    return NextResponse.json({
+    const payload = {
       ok: true,
       cancelledCount: cancelled.length,
       emailsSent,
+      emailsFailed,
       lessons: cancelled.map(l => ({ id: l.id, class_name: l.class_name, start_timestamp: l.start_timestamp })),
-    })
+    }
+    if (emailsFailed > 0) {
+      return NextResponse.json(
+        { ...payload, ok: false, error: 'One or more cancellation emails failed after lessons were cancelled.' },
+        { status: 500 },
+      )
+    }
+    return NextResponse.json(payload)
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Server error'
     console.error('Auto-cancel failed', e)
