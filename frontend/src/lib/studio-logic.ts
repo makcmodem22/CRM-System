@@ -1207,11 +1207,11 @@ async function refundSingleVisitPayment(args: { paymentId: string; orderId: stri
 export async function autoCancelLowAttendanceLessons(windowHours = 2): Promise<AutoCancelledLesson[]> {
   const now = new Date()
   const cutoff = new Date(now.getTime() + windowHours * 60 * 60 * 1000)
+  // Do not pre-filter by booked_count: it can include pending holds and may drift from booking rows.
   const candidates = await prisma.publicLesson.findMany({
     where: {
       status: 'SCHEDULED',
       start_timestamp: { gt: now, lte: cutoff },
-      booked_count: { lte: 1 },
     },
   })
 
@@ -1224,8 +1224,25 @@ export async function autoCancelLowAttendanceLessons(windowHours = 2): Promise<A
       const moneyRefunds: Array<{ paymentId: string; orderId: string; amount: number }> = []
 
       const committed = await prisma.$transaction(async tx => {
+        const locked = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id
+          FROM public_lesson
+          WHERE id = ${lesson.id}
+            AND status = 'SCHEDULED'
+          FOR UPDATE
+        `
+        if (locked.length === 0) return false
+
+        const activeBookings = await tx.publicLessonBooking.count({
+          where: {
+            lesson_id: lesson.id,
+            status: { in: ['CONFIRMED', 'PENDING_PAYMENT'] },
+          },
+        })
+        if (activeBookings > 1) return false
+
         const flipped = await tx.publicLesson.updateMany({
-          where: { id: lesson.id, status: 'SCHEDULED', booked_count: { lte: 1 } },
+          where: { id: lesson.id, status: 'SCHEDULED' },
           data: { status: 'CANCELLED', booked_count: 0 },
         })
         if (flipped.count === 0) return false
