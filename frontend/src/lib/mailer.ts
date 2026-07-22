@@ -112,3 +112,28 @@ export async function sendBookingCancelledByClientEmail(args: {
     `,
   })
 }
+
+export async function sendPasswordRecoveryEmail(args: { to: string; resetUrl: string }) {
+  await transporter().sendMail({
+    from: fromHeader(),
+    to: args.to,
+    subject: 'Відновлення пароля Brave! Yoga',
+    html: `
+      <div style="font-family: 'Inter', system-ui, -apple-system, sans-serif; max-width: 600px; margin: 0 auto; color: #1E293B; background-color: #FAFAFA; padding: 40px 20px; border-radius: 16px;">
+        <div style="text-align: center; margin-bottom: 30px;">
+          <h1 style="font-size: 32px; font-weight: 900; margin: 0; color: #0F172A; letter-spacing: -1px;"><i style="font-family: 'Georgia', serif; color: #DDA343;">Brave!</i> Yoga</h1>
+          <p style="color: #64748B; font-size: 14px; margin-top: 5px; text-transform: uppercase; letter-spacing: 2px;">Студія твого балансу</p>
+        </div>
+        <div style="background: white; border-radius: 16px; padding: 30px; box-shadow: 0 4px 20px rgba(0,0,0,0.03); border: 1px solid #F1F5F9;">
+          <h2 style="font-size: 20px; color: #0F172A; margin-top: 0;">Відновлення пароля</h2>
+          <p style="font-size: 16px; color: #475569; line-height: 1.5;">Ми отримали запит на зміну пароля для вашого акаунта Brave! Yoga.</p>
+          <p style="font-size: 16px; color: #475569; line-height: 1.5;">Натисніть кнопку нижче, щоб створити новий пароль.</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${escapeHtml(args.resetUrl)}" style="display: inline-block; padding: 14px 28px; background-color: #DDA343; color: #0F172A; text-decoration: none; border-radius: 8px; font-weight: 700; font-size: 14px;">Створити новий пароль</a>
+          </div>
+          <p style="font-size: 14px; color: #64748B; line-height: 1.5;">Якщо ви не просили змінити пароль, просто проігноруйте цей лист.</p>
+        </div>
+      </div>
+    `,
+  })
+}

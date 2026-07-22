@@ -1472,15 +1472,16 @@ function AuthPage({ setCurrentClientId, reloadAppData }: {
     setNotice('')
     setLoading(true)
 
-    const recoveryParams = new URLSearchParams({ mode: 'reset' })
-    if (redirectTo && redirectTo !== '/') recoveryParams.set('redirect', redirectTo)
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: `${window.location.origin}/auth?${recoveryParams.toString()}`,
+    const recoveryResponse = await fetch('/api/auth/password-recovery', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.trim(), redirectTo }),
     })
+    const recoveryBody = (await recoveryResponse.json().catch(() => ({}))) as { error?: string }
 
     setLoading(false)
-    if (resetError) {
-      setError('Не вдалося надіслати лист для відновлення пароля. Спробуйте ще раз.')
+    if (!recoveryResponse.ok) {
+      setError(recoveryBody.error || 'Не вдалося надіслати лист для відновлення пароля. Спробуйте ще раз.')
       return
     }
     setNotice('Якщо цей email зареєстрований, ми надіслали посилання для відновлення пароля.')
