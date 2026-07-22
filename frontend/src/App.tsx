@@ -1386,6 +1386,8 @@ function CancelBookingPage({ reloadAppData }: { reloadAppData: () => Promise<voi
 }
 
 // ── Page: Auth (Login / Register Tabs) ──────────────────────────────────────
+type AuthTab = 'login' | 'register' | 'forgot' | 'reset'
+
 function AuthPage({ setCurrentClientId, reloadAppData }: {
   setCurrentClientId: (id: string | null) => void,
   reloadAppData: () => Promise<void>,
@@ -1393,20 +1395,35 @@ function AuthPage({ setCurrentClientId, reloadAppData }: {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const redirectTo = searchParams.get('redirect') || '/'
+  const isRecoveryRoute = searchParams.get('mode') === 'reset'
 
-  const [tab, setTab] = useState<'login' | 'register'>('login')
+  const [tab, setTab] = useState<AuthTab>(isRecoveryRoute ? 'reset' : 'login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [showPass, setShowPass] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState(isRecoveryRoute ? 'Введіть новий пароль для вашого акаунта.' : '')
 
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event !== 'PASSWORD_RECOVERY') return
+      setTab('reset')
+      setEmail(session?.user?.email || '')
+      setError('')
+      setNotice('Введіть новий пароль для вашого акаунта.')
+    })
+    return () => subscription.unsubscribe()
+  }, [])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    setNotice('')
     setLoading(true)
     const { data, error: authError } = await supabase.auth.signInWithPassword({ email, password })
     setLoading(false)
@@ -1429,6 +1446,7 @@ function AuthPage({ setCurrentClientId, reloadAppData }: {
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    setNotice('')
     setLoading(true)
     // 1. Create Supabase Auth user
     const { data, error: signUpError } = await supabase.auth.signUp({ email, password })
@@ -1444,6 +1462,58 @@ function AuthPage({ setCurrentClientId, reloadAppData }: {
     await studioApi.upsertStudioClient({ name, phone: phone || '' })
     await reloadAppData()
     setCurrentClientId(userId)
+    setLoading(false)
+    navigate(redirectTo)
+  }
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setNotice('')
+    setLoading(true)
+
+    const recoveryParams = new URLSearchParams({ mode: 'reset' })
+    if (redirectTo && redirectTo !== '/') recoveryParams.set('redirect', redirectTo)
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${window.location.origin}/auth?${recoveryParams.toString()}`,
+    })
+
+    setLoading(false)
+    if (resetError) {
+      setError('Не вдалося надіслати лист для відновлення пароля. Спробуйте ще раз.')
+      return
+    }
+    setNotice('Якщо цей email зареєстрований, ми надіслали посилання для відновлення пароля.')
+  }
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setNotice('')
+
+    if (password !== confirmPassword) {
+      setError('Паролі не збігаються')
+      return
+    }
+
+    setLoading(true)
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session?.user) {
+      setLoading(false)
+      setError('Посилання для відновлення недійсне або застаріле. Надішліть новий лист.')
+      setTab('forgot')
+      return
+    }
+
+    const { error: updateError } = await supabase.auth.updateUser({ password })
+    if (updateError) {
+      setLoading(false)
+      setError(updateError.message || 'Не вдалося оновити пароль')
+      return
+    }
+
+    await reloadAppData()
+    setCurrentClientId(session.user.id)
     setLoading(false)
     navigate(redirectTo)
   }
@@ -1483,6 +1553,11 @@ function AuthPage({ setCurrentClientId, reloadAppData }: {
                 <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
               </div>
             )}
+            {notice && (
+              <div className="mb-4 p-3 bg-emerald-950/30 border border-emerald-500/25 rounded-lg text-sm text-emerald-100 flex items-center gap-2">
+                <Check className="w-4 h-4 shrink-0" /> {notice}
+              </div>
+            )}
 
             {tab === 'login' ? (
               <form onSubmit={handleLogin} className="space-y-4">
@@ -1502,8 +1577,15 @@ function AuthPage({ setCurrentClientId, reloadAppData }: {
                 <Button type="submit" disabled={loading} variant="brand" className="w-full h-11 text-base">
                   {loading ? 'Завантаження...' : 'Увійти'}
                 </Button>
+                <button
+                  type="button"
+                  onClick={() => { setTab('forgot'); setError(''); setNotice('') }}
+                  className="w-full text-sm text-muted-foreground/90 hover:text-brand-gold transition-colors"
+                >
+                  Забули пароль?
+                </button>
               </form>
-            ) : (
+            ) : tab === 'register' ? (
               <form onSubmit={handleRegister} className="space-y-4">
                 <div>
                   <label className="text-sm font-medium text-foreground/90 mb-1 flex items-center gap-1.5"><User className="w-3.5 h-3.5" /> Ваше ім'я</label>
@@ -1529,6 +1611,49 @@ function AuthPage({ setCurrentClientId, reloadAppData }: {
                 <Button type="submit" disabled={loading} variant="brand" className="w-full h-11 text-base">
                   {loading ? 'Реєстрація...' : 'Зареєструватись'}
                 </Button>
+              </form>
+            ) : tab === 'forgot' ? (
+              <form onSubmit={handleForgotPassword} className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium text-foreground/90 mb-1 flex items-center gap-1.5"><Mail className="w-3.5 h-3.5" /> Email</label>
+                  <input required type="email" placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)} className={inputClasses} />
+                </div>
+                <Button type="submit" disabled={loading} variant="brand" className="w-full h-11 text-base">
+                  {loading ? 'Надсилання...' : 'Надіслати посилання'}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => { setTab('login'); setError(''); setNotice('') }}
+                  className="w-full text-sm text-muted-foreground/90 hover:text-brand-gold transition-colors"
+                >
+                  Повернутись до входу
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleResetPassword} className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium text-foreground/90 mb-1 flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" /> Новий пароль</label>
+                  <div className="relative">
+                    <input required type={showPass ? 'text' : 'password'} placeholder="Новий пароль" value={password} onChange={e=>setPassword(e.target.value)} className={inputClasses} minLength={4} />
+                    <button type="button" onClick={()=>setShowPass(!showPass)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/90 hover:text-muted-foreground">
+                      {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-foreground/90 mb-1 flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" /> Повторіть пароль</label>
+                  <input required type={showPass ? 'text' : 'password'} placeholder="Повторіть пароль" value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} className={inputClasses} minLength={4} />
+                </div>
+                <Button type="submit" disabled={loading} variant="brand" className="w-full h-11 text-base">
+                  {loading ? 'Збереження...' : 'Зберегти новий пароль'}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => { setTab('forgot'); setError(''); setNotice(''); setPassword(''); setConfirmPassword('') }}
+                  className="w-full text-sm text-muted-foreground/90 hover:text-brand-gold transition-colors"
+                >
+                  Надіслати новий лист
+                </button>
               </form>
             )}
           </CardContent>
